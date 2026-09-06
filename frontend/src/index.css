@@ -15,7 +15,7 @@
     --scc-text: #e7edf6;
     --scc-muted: #8ba0bd;
 
-    /* Bridge Mappings to activate standard UI component cards */
+    /* Explicit Master Component Layout Variable Binds */
     --background: var(--scc-navy-900);
     --foreground: var(--scc-text);
     --card: var(--scc-navy-800);
@@ -38,142 +38,92 @@
 
 body {
     margin: 0;
-    font-family: 'IBM Plex Sans', system-ui, sans-serif;
-    background-color: var(--scc-navy-900);
-    color: var(--scc-text);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-.font-display {
-    font-family: 'Oswald', sans-serif;
-    letter-spacing: 0.04em;
-}
-
-.font-mono-scc {
-    font-family: 'IBM Plex Mono', monospace;
-}
-
-::selection {
-    background: var(--scc-gold);
-    color: var(--scc-navy-950);
-}
-
-/* thin gold scrollbar */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--scc-navy-950); }
-::-webkit-scrollbar-thumb { background: #1f3a5f; border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: #2a4c78; }
-
-.scc-grid-bg {
-    background-color: var(--scc-navy-900);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
+    background-color: var(--scc-navy-900) !important;
+    color: var(--scc-text) !important;
     background-image:
         linear-gradient(rgba(28, 53, 87, 0.25) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(28, 53, 87, 0.25) 1px, transparent 1px);
-    background-size: 44px 44px;
+        linear-gradient(90deg, rgba(28, 53, 87, 0.25) 1px, transparent 1px) !important;
+    background-size: 44px 44px !important;
+    -webkit-font-smoothing: antialiased;
 }
 
-.scc-panel {
-    background: linear-gradient(180deg, rgba(16, 37, 64, 0.85), rgba(10, 21, 36, 0.85));
-    border: 1px solid var(--scc-border);
-    backdrop-filter: blur(6px);
+/* Force Oswald Display Typography Mapping on Titles */
+h1, h2, .font-display {
+    font-family: 'Oswald', sans-serif !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
 }
 
-@keyframes scc-fade-up {
-    from { opacity: 0; transform: translateY(14px); }
-    to   { opacity: 1; transform: translateY(0); }
-}
-.scc-fade-up { animation: scc-fade-up 0.5s ease both; }
-
-@keyframes scc-pulse-dot {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-}
-.scc-live-dot { animation: scc-pulse-dot 1.6s ease-in-out infinite; }
-
-@layer base {
-    * { border-color: var(--scc-border); }
+/* Force Golden Highlights on Identity Tags and Badges */
+p.text-xs.font-display {
+    color: var(--scc-gold) !important;
 }
 
-/* ---------- Surveillance / dossier aesthetic ---------- */
+/* Custom Interactive UI Borders and Focus Panels */
+header, .bg-\[\#0b1b33\] {
+    background-color: var(--scc-navy-950) !important;
+    border-bottom: 2px solid var(--scc-border) !important;
+}
 
-/* global CRT scanlines */
-.scc-scanlines::before {
+/* Force Glowing Neon Metrics Cards Panels Layout */
+.grid-cols-1 .bg-\[\#0b1b33\]\/60 {
+    background: linear-gradient(180deg, rgba(16, 37, 64, 0.85), rgba(10, 21, 36, 0.85)) !important;
+    border: 1px solid var(--scc-border) !important;
+    backdrop-filter: blur(6px) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Table Ledger Formatting Overrides */
+table th, .bg-\[\#102540\]\/50 {
+    background-color: var(--scc-navy-950) !important;
+    color: var(--scc-muted) !important;
+    border-bottom: 2px solid var(--scc-border) !important;
+    font-family: 'Oswald', sans-serif !important;
+    letter-spacing: 0.05em !important;
+}
+
+table td, .divide-y tr {
+    border-bottom: 1px solid rgba(28, 53, 87, 0.4) !important;
+}
+
+/* Filter Deck Control Buttons Formatting */
+button.border {
+    background-color: var(--scc-navy-800) !important;
+    border: 1px solid var(--scc-border) !important;
+    color: var(--scc-muted) !important;
+}
+
+button.bg-\[\#d4b25a\] {
+    background-color: var(--scc-gold) !important;
+    color: var(--scc-navy-950) !important;
+    font-weight: bold !important;
+    border: 1px solid var(--scc-gold) !important;
+}
+
+/* Global CRT Visual Scanlines Overlay Animation Matrix */
+body::before {
     content: "";
     position: fixed;
     inset: 0;
-    z-index: 45;
+    z-index: 9998;
     pointer-events: none;
     background: repeating-linear-gradient(
         to bottom,
-        rgba(0, 0, 0, 0.18) 0px,
-        rgba(0, 0, 0, 0.18) 1px,
+        rgba(0, 0, 0, 0.15) 0px,
+        rgba(0, 0, 0, 0.15) 1px,
         transparent 1px,
         transparent 3px
     );
-    opacity: 0.28;
+    opacity: 0.25;
     mix-blend-mode: overlay;
 }
 
-/* global vignette */
-.scc-vignette::after {
+body::after {
     content: "";
     position: fixed;
     inset: 0;
-    z-index: 44;
+    z-index: 9997;
     pointer-events: none;
-    background: radial-gradient(ellipse at center, transparent 52%, rgba(2, 6, 14, 0.6) 100%);
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(2, 6, 14, 0.55) 100%);
 }
-
-/* scanning sweep over the crest */
-.scc-scanbox {
-    position: relative;
-    overflow: hidden;
-}
-.scc-scanbox::after {
-    content: "";
-    position: absolute;
-    left: -10%;
-    right: -10%;
-    height: 40%;
-    top: -40%;
-    background: linear-gradient(to bottom, transparent, rgba(212, 178, 90, 0.28), transparent);
-    animation: scc-scan 3.4s linear infinite;
-}
-@keyframes scc-scan {
-    0% { top: -45%; }
-    100% { top: 115%; }
-}
-
-/* classification strip */
-.scc-classbar {
-    background: repeating-linear-gradient(
-        45deg,
-        rgba(212, 178, 90, 0.12) 0px,
-        rgba(212, 178, 90, 0.12) 10px,
-        rgba(212, 178, 90, 0.04) 10px,
-        rgba(212, 178, 90, 0.04) 20px
-    );
-    border-bottom: 1px solid var(--scc-border);
-}
-
-/* REC / live blink */
-@keyframes scc-blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.15; }
-}
-.scc-blink { animation: scc-blink 1.3s steps(1) infinite; }
-
-/* corner brackets frame */
-.scc-corners { position: relative; }
-.scc-corners > .c {
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    border-color: var(--scc-gold);
-    opacity: 0.65;
-}
-.scc-corners > .tl { top: -4px; left: -4px; border-top: 2px solid; border-left: 2px solid; }
-.scc-corners > .tr { top: -4px; right: -4px; border-top: 2px solid; border-right: 2px solid; }
-.scc-corners > .bl { bottom: -4px; left: -4px; border-bottom: 2px solid; border-left: 2px solid; }
-.scc-corners > .br { bottom: -4px; right: -4px; border-bottom: 2px solid; border-right: 2px solid; }
