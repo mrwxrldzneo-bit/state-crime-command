@@ -1,5 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useState } from "react";
-import api, { formatApiError } from "@/lib/api";
+import api, { formatApiError } from "../lib/api";
 
 const AuthContext = createContext(null);
 
