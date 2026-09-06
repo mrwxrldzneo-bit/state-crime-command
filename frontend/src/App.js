@@ -1,8 +1,18 @@
+import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider, useAuth } from "./context/AuthContext";
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
+import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import Login from "@/pages/Login";
+import Dashboard from "@/pages/Dashboard";
 import { ShieldAlert } from "lucide-react";
+
+const TOASTER_OPTIONS = {
+  style: {
+    background: "#102540",
+    border: "1px solid #1c3557",
+    color: "#e7edf6",
+  },
+};
 
 function Gate() {
   const { user } = useAuth();
@@ -34,6 +44,7 @@ function App() {
         <BrowserRouter>
           <Gate />
         </BrowserRouter>
+        <Toaster position="top-right" toastOptions={TOASTER_OPTIONS} />
       </AuthProvider>
     </div>
   );
