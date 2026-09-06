@@ -1,7 +1,7 @@
 import axios from "axios";
 
-// Dynamically route data traffic straight through your stable live Render background backend engine
-const API_BASE_URL = process.env.REACT_APP_API_URL || "https://onrender.com";
+// Explicitly route data traffic straight through your stable live Render backend engine URL
+const API_BASE_URL = "https://onrender.com";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
