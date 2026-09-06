@@ -10,43 +10,25 @@ export default function Dashboard() {
   const [filter, setFilter] = useState("ALL");
 
   useEffect(() => {
-    api.get("/cases")
-      .then((res) => {
-        if (res.data && Array.isArray(res.data)) {
-          setCases(res.data);
-        } else {
-          setCases([]);
-        }
-      })
-      .catch((err) => {
-        console.error(err);
-        setCases([]);
-      });
+    api.get("/cases").then((res) => setCases(res.data)).catch(console.error);
   }, []);
 
   const stats = {
-    pending: Array.isArray(cases) ? cases.filter((c) => user?.role === "admin" ? c?.status === "PENDING" : false).length : 0,
-    opened: Array.isArray(cases) ? cases.filter((c) => c?.status === "OPENED").length : 0,
-    closed: Array.isArray(cases) ? cases.filter((c) => c?.status === "CLOSED").length : 0,
+    pending: cases.filter((c) => user?.role === "admin" ? c.status === "PENDING" : false).length,
+    opened: cases.filter((c) => c.status === "OPENED").length,
+    closed: cases.filter((c) => c.status === "CLOSED").length,
   };
 
-  const filteredCases = Array.isArray(cases) ? cases.filter((c) => {
-    if (!c) return false;
-    const caseName = c.case_name ? String(c.case_name).toLowerCase() : "";
-    const caseId = c.case_id ? String(c.case_id).toLowerCase() : "";
-    const division = c.division ? String(c.division).toLowerCase() : "";
-    const searchString = search.toLowerCase();
-
-    const matchesSearch = caseName.includes(searchString) ||
-                          caseId.includes(searchString) ||
-                          division.includes(searchString);
-
+  const filteredCases = cases.filter((c) => {
+    const matchesSearch = c.case_name.toLowerCase().includes(search.toLowerCase()) ||
+                          c.case_id.toLowerCase().includes(search.toLowerCase()) ||
+                          c.division.toLowerCase().includes(search.toLowerCase());
     if (filter === "ALL") return matchesSearch;
     return matchesSearch && c.status === filter;
-  }) : [];
+  });
 
   return (
-    <div className="min-h-screen bg-[#061326] text-[#e7edf6] font-sans antialiased">
+    <div className="min-h-screen bg-[#061326] text-[#e7edf6] font-sans antialiased relative scc-scanlines scc-vignette">
       {/* Top Banner Header */}
       <header className="bg-[#0b1b33] border-b border-[#1c3557] px-6 py-4 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-3">
@@ -167,13 +149,13 @@ export default function Dashboard() {
                   </td>
                   <td className="px-4 py-3 text-right font-sans">
                     <div className="flex gap-2 justify-end">
-                      <button className="p-1 hover:bg-[#1c3557] rounded text-[#8ba0bd] transition-colors cursor-pointer">
+                      <button className="p-1 hover:bg-[#1c3557] rounded text-[#8ba0bd] transition-colors cursor-pointer bg-transparent border-none shadow-none">
                         <Eye className="h-3.5 w-3.5" />
                       </button>
-                      <button className="p-1 hover:bg-[#1c3557] rounded text-blue-400 transition-colors cursor-pointer">
+                      <button className="p-1 hover:bg-[#1c3557] rounded text-blue-400 transition-colors cursor-pointer bg-transparent border-none shadow-none">
                         <Edit2 className="h-3.5 w-3.5" />
                       </button>
-                      <button className="p-1 hover:bg-[#1c3557] rounded text-rose-400 transition-colors cursor-pointer">
+                      <button className="p-1 hover:bg-[#1c3557] rounded text-rose-400 transition-colors cursor-pointer bg-transparent border-none shadow-none">
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
