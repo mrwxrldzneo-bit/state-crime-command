@@ -1,8 +1,6 @@
-import { useState } from "react";
-import { useAuth } from "@/context/AuthContext";
-import { Lock, User, Loader2, AlertTriangle, ShieldCheck } from "lucide-react";
-import LiveClock from "@/components/LiveClock";
-import { Brand, Disclaimer } from "@/components/Brand";
+import React, { useState } from "react";
+import { useAuth } from "../context/AuthContext";
+import { Shield, Lock, User, AlertCircle } from "lucide-react";
 
 export default function Login() {
   const { login } = useAuth();
@@ -11,103 +9,83 @@ export default function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const submit = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
-    const res = await login(username.trim(), password);
-    setLoading(false);
-    if (!res.ok) setError(res.error || "Invalid credentials. Access denied.");
+
+    const res = await login(username, password);
+    if (!res.ok) {
+      setError(res.error || "Invalid intelligence credentials");
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="scc-grid-bg min-h-screen flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md scc-fade-up">
-        {/* Emblem + wordmark */}
-        <div className="mb-7">
-          <Brand variant="stacked" />
-          <div className="mt-4 flex items-center justify-center gap-2 font-mono-scc text-[10px] uppercase tracking-[0.18em] text-[#6f849f]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#e05656] scc-blink" />
-            <span>Secure Terminal</span>
-            <span className="text-[#33455f]">//</span>
-            <span>Clearance: Restricted</span>
-            <span className="text-[#33455f]">//</span>
-            <span>Sector: Sydney</span>
-          </div>
+    <div className="scc-grid-bg min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-[#0b1b33]/90 border border-[#1c3557] rounded-lg p-6 shadow-2xl backdrop-blur-md relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-[2px] bg-[#d4b25a]" />
+        
+        <div className="flex flex-col items-center gap-2 mb-6">
+          <Shield className="h-12 w-10 text-[#d4b25a]" />
+          <h1 className="font-display font-bold text-xl uppercase tracking-wider text-[#e7edf6] text-center">
+            State Crime Command
+          </h1>
+          <p className="font-display text-xs uppercase tracking-[0.2em] text-[#8ba0bd]">
+            Intelligence Login Portal
+          </p>
         </div>
 
-        <form onSubmit={submit} className="scc-panel rounded-xl p-6 sm:p-8 space-y-5 relative scc-corners" data-testid="login-form">
-          <span className="c tl" /><span className="c tr" /><span className="c bl" /><span className="c br" />
-          <div className="text-center mb-1">
-            <p className="font-display uppercase tracking-[0.2em] text-sm text-[#e7edf6]">Restricted Access</p>
-            <div className="h-px w-16 bg-[#d4b25a]/50 mx-auto mt-3" />
+        {error && (
+          <div className="mb-4 bg-[#2a1b1b] border border-[#5c2424] rounded p-3 flex items-center gap-2 text-sm text-[#f1a8a8]">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <p>{error}</p>
           </div>
+        )}
 
-          <div className="space-y-1.5">
-            <label className="text-[11px] uppercase tracking-widest text-[#8ba0bd]">Officer ID</label>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs uppercase tracking-wider text-[#8ba0bd] font-medium">
+              Badge / Username
+            </label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6f849f]" />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#4f6b8c]" />
               <input
-                data-testid="login-username-input"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter username"
-                autoComplete="username"
-                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 focus:ring-1 focus:ring-[#d4b25a]/40 transition-colors"
+                required
+                className="w-full bg-[#102540] border border-[#1c3557] rounded pl-10 pr-3 py-2 text-sm text-[#e7edf6] focus:outline-none focus:border-[#d4b25a] font-mono transition-colors"
+                placeholder="ENTER BADGE ID"
               />
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-[11px] uppercase tracking-widest text-[#8ba0bd]">Access Code</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs uppercase tracking-wider text-[#8ba0bd] font-medium">
+              Access Password
+            </label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6f849f]" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#4f6b8c]" />
               <input
-                data-testid="login-password-input"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter access code"
-                autoComplete="current-password"
-                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 focus:ring-1 focus:ring-[#d4b25a]/40 transition-colors"
+                required
+                className="w-full bg-[#102540] border border-[#1c3557] rounded pl-10 pr-3 py-2 text-sm text-[#e7edf6] focus:outline-none focus:border-[#d4b25a] font-mono transition-colors"
+                placeholder="••••••••"
               />
             </div>
           </div>
 
-          {error && (
-            <div
-              data-testid="login-error"
-              className="flex items-center gap-2 rounded-md border border-[#7a2f2f] bg-[#2a1414] px-3 py-2 text-sm text-[#f4a6a6]"
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              {error}
-            </div>
-          )}
-
           <button
-            data-testid="login-submit-button"
             type="submit"
             disabled={loading}
-            className="w-full flex items-center justify-center gap-2 rounded-md bg-[#d4b25a] hover:bg-[#f0d67a] disabled:opacity-60 text-[#0a1524] font-display font-600 uppercase tracking-[0.15em] text-sm py-3 transition-colors"
+            className="w-full bg-[#d4b25a] hover:bg-[#c29f47] disabled:bg-[#d4b25a]/50 text-[#0b1b33] font-display font-bold uppercase tracking-widest text-xs py-2.5 rounded transition-colors shadow-lg cursor-pointer mt-2"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            {loading ? "Verifying" : "Access System"}
+            {loading ? "AUTHORISING ACCESS..." : "REQUEST CLEARANCE"}
           </button>
-
-          <p className="text-center text-[10px] text-[#556a86] leading-relaxed pt-1">
-            Authorised personnel only. All access to this terminal is logged and monitored.
-            Unauthorised entry is prohibited.
-          </p>
         </form>
-
-        <div className="mt-6 flex justify-center opacity-80">
-          <LiveClock />
-        </div>
-
-        <div className="mt-6 border-t border-[#132842] pt-4">
-          <Disclaimer className="text-center" />
-        </div>
       </div>
     </div>
   );
