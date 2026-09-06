@@ -1,25 +1,33 @@
 import axios from "axios";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+// Dynamically route data traffic straight through your stable live Render background backend engine
+const API_BASE_URL = process.env.REACT_APP_API_URL || "https://onrender.com";
 
-const api = axios.create({ baseURL: API });
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
 
+// Pass token clearance tags automatically inside background transaction handshakes
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("scc_token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
 
-export function formatApiError(detail) {
-  if (detail == null) return "Something went wrong. Please try again.";
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail))
-    return detail
-      .map((e) => (e && typeof e.msg === "string" ? e.msg : JSON.stringify(e)))
-      .filter(Boolean)
-      .join(" ");
-  if (detail && typeof detail.msg === "string") return detail.msg;
+export const formatApiError = (detail) => {
+  if (!detail) return null;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => d.msg || d.message).join(", ");
+  }
+  if (typeof detail === "object") {
+    return detail.msg || detail.message || JSON.stringify(detail);
+  }
   return String(detail);
-}
+};
 
 export default api;
