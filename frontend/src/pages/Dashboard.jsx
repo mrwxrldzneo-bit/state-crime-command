@@ -10,22 +10,40 @@ export default function Dashboard() {
   const [filter, setFilter] = useState("ALL");
 
   useEffect(() => {
-    api.get("/cases").then((res) => setCases(res.data)).catch(console.error);
+    api.get("/cases")
+      .then((res) => {
+        if (res.data && Array.isArray(res.data)) {
+          setCases(res.data);
+        } else {
+          setCases([]);
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        setCases([]);
+      });
   }, []);
 
   const stats = {
-    pending: cases.filter((c) => user?.role === "admin" ? c.status === "PENDING" : false).length,
-    opened: cases.filter((c) => c.status === "OPENED").length,
-    closed: cases.filter((c) => c.status === "CLOSED").length,
+    pending: Array.isArray(cases) ? cases.filter((c) => user?.role === "admin" ? c?.status === "PENDING" : false).length : 0,
+    opened: Array.isArray(cases) ? cases.filter((c) => c?.status === "OPENED").length : 0,
+    closed: Array.isArray(cases) ? cases.filter((c) => c?.status === "CLOSED").length : 0,
   };
 
-  const filteredCases = cases.filter((c) => {
-    const matchesSearch = c.case_name.toLowerCase().includes(search.toLowerCase()) ||
-                          c.case_id.toLowerCase().includes(search.toLowerCase()) ||
-                          c.division.toLowerCase().includes(search.toLowerCase());
+  const filteredCases = Array.isArray(cases) ? cases.filter((c) => {
+    if (!c) return false;
+    const caseName = c.case_name ? String(c.case_name).toLowerCase() : "";
+    const caseId = c.case_id ? String(c.case_id).toLowerCase() : "";
+    const division = c.division ? String(c.division).toLowerCase() : "";
+    const searchString = search.toLowerCase();
+
+    const matchesSearch = caseName.includes(searchString) ||
+                          caseId.includes(searchString) ||
+                          division.includes(searchString);
+
     if (filter === "ALL") return matchesSearch;
     return matchesSearch && c.status === filter;
-  });
+  }) : [];
 
   return (
     <div className="min-h-screen bg-[#061326] text-[#e7edf6] font-sans antialiased">
@@ -130,10 +148,10 @@ export default function Dashboard() {
             </thead>
             <tbody className="divide-y divide-[#1c3557]/40 font-mono text-xs">
               {filteredCases.map((c) => (
-                <tr key={c.id} className="hover:bg-[#102540]/30 transition-colors">
-                  <td className="px-4 py-3 text-[#d4b25a] font-bold">{c.case_id}</td>
-                  <td className="px-4 py-3 font-sans text-sm text-[#e7edf6]">{c.case_name}</td>
-                  <td className="px-4 py-3 font-sans text-[#8ba0bd]">{c.division}</td>
+                <tr key={c.id || Math.random()} className="hover:bg-[#102540]/30 transition-colors">
+                  <td className="px-4 py-3 text-[#d4b25a] font-bold">{c.case_id || "N/A"}</td>
+                  <td className="px-4 py-3 font-sans text-sm text-[#e7edf6]">{c.case_name || "Untitled"}</td>
+                  <td className="px-4 py-3 font-sans text-[#8ba0bd]">{c.division || "Unassigned"}</td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border ${
@@ -144,7 +162,7 @@ export default function Dashboard() {
                             : "bg-amber-950/40 border-amber-800 text-amber-400"
                       }`}
                     >
-                      {c.status}
+                      {c.status || "PENDING"}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right font-sans">
@@ -165,7 +183,7 @@ export default function Dashboard() {
               {filteredCases.length === 0 && (
                 <tr>
                   <td colSpan="5" className="px-4 py-8 text-center text-sm font-sans text-[#4f6b8c] uppercase tracking-wider">
-                    No intelligence vectors match criteria.
+                    No intelligence records found matching criteria.
                   </td>
                 </tr>
               )}
