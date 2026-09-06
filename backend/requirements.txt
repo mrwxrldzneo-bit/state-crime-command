@@ -9,3 +9,4 @@ dnspython
 email-validator
 pytest
 python-dotenv
+PyJWT
