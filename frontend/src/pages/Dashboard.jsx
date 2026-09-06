@@ -159,4 +159,34 @@ export default function Dashboard() {
               </button>
             ))}
             
-            {/* The Missing Golden Plus Button Tag Element */}
+            <button className="flex items-center gap-1.5 px-3 py-1.5 bg-[#d4b25a] border border-[#d4b25a] hover:bg-[#f0d67a] hover:border-[#f0d67a] text-[#0b1b33] rounded text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer whitespace-nowrap ml-2">
+              <Plus className="h-3.5 w-3.5" /> New Case File
+            </button>
+          </div>
+        </div>
+
+        {/* Master Case Index Data Ledger Table Container */}
+        <div className="bg-[#0b1b33]/40 border border-[#1c3557] rounded-lg overflow-x-auto shadow-xl">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-[#1c3557] bg-[#102540]/50 text-[10px] uppercase tracking-wider text-[#8ba0bd] font-bold">
+                <th className="px-4 py-3">Case ID</th>
+                <th className="px-4 py-3">Case Name</th>
+                <th className="px-4 py-3">Division</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1c3557]/40 font-mono text-xs">
+              {filteredCases.map((c) => (
+                <tr key={c.id || Math.random()} className="hover:bg-[#102540]/30 transition-colors">
+                  <td className="px-4 py-3 text-[#d4b25a] font-bold">{c.case_id || "N/A"}</td>
+                  <td className="px-4 py-3 font-sans text-sm text-[#e7edf6]">{c.case_name || "Untitled"}</td>
+                  <td className="px-4 py-3 font-sans text-[#8ba0bd]">{c.division || "Unassigned"}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border ${
+                        c.status === "OPENED"
+                          ? "bg-emerald-950/40 border-emerald-800 text-emerald-400"
+                          : c.status === "CLOSED"
+                            ? "bg-blue-950/40 border-blue-800 text-blue-400"
