@@ -1,7 +1,15 @@
 import "@/App.css";
 
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
+
 import { Toaster } from "@/components/ui/sonner";
+
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 
 import Login from "@/pages/Login";
@@ -16,6 +24,19 @@ const TOASTER_OPTIONS = {
     color: "#e7edf6",
   },
 };
+
+function PageTransition({ children }) {
+  const location = useLocation();
+
+  return (
+    <div
+      key={location.pathname}
+      className="scc-page-transition min-h-screen"
+    >
+      {children}
+    </div>
+  );
+}
 
 function Gate() {
   const { user } = useAuth();
@@ -33,22 +54,43 @@ function Gate() {
   }
 
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={user ? <Navigate to="/" replace /> : <Login />}
-      />
+    <PageTransition>
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            user ? <Navigate to="/cases" replace /> : <Login />
+          }
+        />
 
-      <Route
-        path="/"
-        element={user ? <Dashboard /> : <Navigate to="/login" replace />}
-      />
+        <Route
+          path="/cases"
+          element={
+            user ? <Dashboard /> : <Navigate to="/login" replace />
+          }
+        />
 
-      <Route
-        path="*"
-        element={<Navigate to="/" replace />}
-      />
-    </Routes>
+        <Route
+          path="/"
+          element={
+            <Navigate
+              to={user ? "/cases" : "/login"}
+              replace
+            />
+          }
+        />
+
+        <Route
+          path="*"
+          element={
+            <Navigate
+              to={user ? "/cases" : "/login"}
+              replace
+            />
+          }
+        />
+      </Routes>
+    </PageTransition>
   );
 }
 
@@ -65,6 +107,31 @@ function App() {
           toastOptions={TOASTER_OPTIONS}
         />
       </AuthProvider>
+
+      <style>{`
+        .scc-page-transition {
+          animation: scc-page-enter 320ms cubic-bezier(0.22, 1, 0.36, 1);
+          will-change: opacity, transform;
+        }
+
+        @keyframes scc-page-enter {
+          from {
+            opacity: 0;
+            transform: translateY(8px);
+          }
+
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .scc-page-transition {
+            animation: none;
+          }
+        }
+      `}</style>
     </div>
   );
 }

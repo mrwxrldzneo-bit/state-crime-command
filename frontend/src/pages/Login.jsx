@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+
 import {
   Lock,
   User,
@@ -8,6 +9,44 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+function playSuccessSound() {
+  try {
+    const AudioContext =
+      window.AudioContext || window.webkitAudioContext;
+
+    if (!AudioContext) {
+      return;
+    }
+
+    const audioContext = new AudioContext();
+    const now = audioContext.currentTime;
+
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+
+    oscillator.type = "sine";
+
+    oscillator.frequency.setValueAtTime(740, now);
+    oscillator.frequency.setValueAtTime(988, now + 0.09);
+
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.075, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+
+    oscillator.start(now);
+    oscillator.stop(now + 0.3);
+
+    oscillator.addEventListener("ended", () => {
+      audioContext.close().catch(() => {});
+    });
+  } catch (error) {
+    console.warn("Unable to play confirmation sound:", error);
+  }
+}
+
 export default function Login() {
   const authContext = useAuth();
 
@@ -15,6 +54,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
   const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
 
@@ -30,8 +70,6 @@ export default function Login() {
         second: "2-digit",
       };
 
-      setTimeStr(now.toLocaleTimeString("en-AU", timeOptions));
-
       const dateOptions = {
         timeZone: "Australia/Sydney",
         weekday: "long",
@@ -40,8 +78,14 @@ export default function Login() {
         year: "numeric",
       };
 
+      setTimeStr(
+        now.toLocaleTimeString("en-AU", timeOptions)
+      );
+
       setDateStr(
-        now.toLocaleDateString("en-AU", dateOptions).toUpperCase()
+        now
+          .toLocaleDateString("en-AU", dateOptions)
+          .toUpperCase()
       );
     };
 
@@ -52,22 +96,29 @@ export default function Login() {
     return () => clearInterval(interval);
   }, []);
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const submit = async (event) => {
+    event.preventDefault();
 
     const checkUser = username.trim().toUpperCase();
     const checkPass = password.trim();
 
     if (!username || !password) {
-      return setError("All tactical entry credentials required.");
+      setError("All tactical entry credentials required.");
+      return;
     }
 
     setError("");
     setLoading(true);
 
+    /*
+     * Keep the existing development credentials for the RP environment.
+     * The authentication context remains the primary authentication path.
+     */
     if (
-      (checkUser === "ADMIN" && checkPass === "ADMINSCC2026!") ||
-      (checkUser === "DETECTIVE" && checkPass === "NSWPFSCC2026")
+      (checkUser === "ADMIN" &&
+        checkPass === "ADMINSCC2026!") ||
+      (checkUser === "DETECTIVE" &&
+        checkPass === "NSWPFSCC2026")
     ) {
       try {
         const loginFunc =
@@ -92,50 +143,63 @@ export default function Login() {
           );
         }
 
-        window.location.href = "/";
+        playSuccessSound();
+
+        window.location.href = "/cases";
         return;
       } catch (err) {
-        localStorage.setItem(
-          "scc_token",
-          "clearance_approved_bypass_token"
+        setLoading(false);
+        setError(
+          err?.response?.data?.detail ||
+            err?.response?.data?.message ||
+            err?.message ||
+            "Authentication failed. Access denied."
         );
-
-        window.location.href = "/";
         return;
       }
     }
 
     try {
-      const fallbackLogin =
+      const loginFunc =
         authContext?.login ||
         authContext?.loginUser ||
         authContext?.signIn;
 
-      if (typeof fallbackLogin === "function") {
-        const res = await fallbackLogin(username.trim(), password);
-
-        setLoading(false);
-
-        if (res && !res.ok) {
-          setError(
-            res.error || "Invalid credentials. Access denied."
-          );
-        } else {
-          window.location.href = "/";
-        }
-      } else {
+      if (typeof loginFunc !== "function") {
         setLoading(false);
         setError(
-          "Authentication service layer error. Access method offline."
+          "Authentication service layer error. Access method unavailable."
         );
+        return;
       }
+
+      const result = await loginFunc(
+        username.trim(),
+        password
+      );
+
+      setLoading(false);
+
+      if (result && result.ok === false) {
+        setError(
+          result.error ||
+            "Invalid credentials. Access denied."
+        );
+        return;
+      }
+
+      playSuccessSound();
+
+      window.location.href = "/cases";
     } catch (err) {
       setLoading(false);
 
       setError(
-        `Database Error: Connection refused by server firewall. Error: ${
-          err.message || err
-        }`
+        err?.response?.data?.detail ||
+          err?.response?.data?.message ||
+          `Database Error: ${
+            err?.message || "Authentication request failed."
+          }`
       );
     }
   };
@@ -240,8 +304,11 @@ export default function Login() {
               <input
                 type="text"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(event) =>
+                  setUsername(event.target.value)
+                }
                 placeholder="ENTER USERNAME"
+                autoComplete="username"
                 className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors uppercase tracking-wider font-mono"
               />
             </div>
@@ -258,8 +325,11 @@ export default function Login() {
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) =>
+                  setPassword(event.target.value)
+                }
                 placeholder="ENTER ACCESS CODE"
+                autoComplete="current-password"
                 className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors tracking-wider font-mono"
               />
             </div>
@@ -291,8 +361,9 @@ export default function Login() {
           </button>
 
           <p className="text-[9px] text-center text-[#556a86] uppercase tracking-wider">
-            Authorised personnel only. All access to this terminal is
-            logged and monitored. Unauthorised entry is prohibited.
+            Authorised personnel only. All access to this
+            terminal is logged and monitored. Unauthorised
+            entry is prohibited.
           </p>
 
           <div className="border-t border-[#142c4d] pt-4 text-center">
@@ -311,10 +382,10 @@ export default function Login() {
         </form>
 
         <p className="mt-5 max-w-md text-center text-[8px] leading-relaxed text-[#43556e]">
-          Unofficial fan-made roleplay tool. Not affiliated with or endorsed
-          by the New South Wales Police Force. Crests and names belong to
-          their respective owners and are used for non-commercial roleplay
-          only.
+          Unofficial fan-made roleplay tool. Not affiliated
+          with or endorsed by the New South Wales Police Force.
+          Crests and names belong to their respective owners
+          and are used for non-commercial roleplay only.
         </p>
       </div>
     </div>
