@@ -68,6 +68,10 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const completeLogin = useCallback(() => {
+    window.location.assign("/cases");
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem("scc_token");
     localStorage.removeItem("scc_user");
@@ -78,10 +82,11 @@ export function AuthProvider({ children }) {
     () => ({
       user,
       login,
+      completeLogin,
       logout,
       isAdmin: user?.role === "admin",
     }),
-    [user, login, logout]
+    [user, login, completeLogin, logout]
   );
 
   return (

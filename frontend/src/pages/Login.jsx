@@ -3,93 +3,134 @@ import { useAuth } from "../context/AuthContext";
 import {
   Lock,
   User,
-  Loader2,
   AlertTriangle,
   ShieldCheck,
+  CheckCircle2,
+  Radio,
+  Database,
+  Terminal,
+  Activity,
 } from "lucide-react";
 
-function playSuccessSound(audioContext) {
+function createAudioContext() {
+  try {
+    const AudioContextClass =
+      window.AudioContext || window.webkitAudioContext;
+
+    if (!AudioContextClass) return null;
+
+    return new AudioContextClass();
+  } catch (error) {
+    console.warn("Unable to initialise audio:", error);
+    return null;
+  }
+}
+
+function playAccessGrantedSound(audioContext) {
   try {
     if (!audioContext) return;
 
     const now = audioContext.currentTime;
 
     const master = audioContext.createGain();
+
     master.gain.setValueAtTime(0.0001, now);
-    master.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
-    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+    master.gain.exponentialRampToValueAtTime(0.55, now + 0.025);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 1.35);
+
     master.connect(audioContext.destination);
 
-    const click = audioContext.createOscillator();
-    const clickGain = audioContext.createGain();
+    // Initial terminal confirmation
+    const terminal = audioContext.createOscillator();
+    const terminalGain = audioContext.createGain();
 
-    click.type = "square";
-    click.frequency.setValueAtTime(900, now);
+    terminal.type = "square";
+    terminal.frequency.setValueAtTime(560, now);
 
-    clickGain.gain.setValueAtTime(0.08, now);
-    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+    terminalGain.gain.setValueAtTime(0.0001, now);
+    terminalGain.gain.exponentialRampToValueAtTime(0.3, now + 0.01);
+    terminalGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
 
-    click.connect(clickGain);
-    clickGain.connect(master);
+    terminal.connect(terminalGain);
+    terminalGain.connect(master);
 
-    click.start(now);
-    click.stop(now + 0.05);
+    terminal.start(now);
+    terminal.stop(now + 0.1);
 
-    const sweep = audioContext.createOscillator();
-    const sweepGain = audioContext.createGain();
+    // Security scan
+    const scan = audioContext.createOscillator();
+    const scanGain = audioContext.createGain();
 
-    sweep.type = "sine";
-    sweep.frequency.setValueAtTime(420, now + 0.03);
-    sweep.frequency.exponentialRampToValueAtTime(880, now + 0.22);
+    scan.type = "sine";
+    scan.frequency.setValueAtTime(280, now + 0.08);
+    scan.frequency.exponentialRampToValueAtTime(1150, now + 0.42);
 
-    sweepGain.gain.setValueAtTime(0.0001, now + 0.03);
-    sweepGain.gain.exponentialRampToValueAtTime(0.055, now + 0.08);
-    sweepGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+    scanGain.gain.setValueAtTime(0.0001, now + 0.08);
+    scanGain.gain.exponentialRampToValueAtTime(0.2, now + 0.18);
+    scanGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.46);
 
-    sweep.connect(sweepGain);
-    sweepGain.connect(master);
+    scan.connect(scanGain);
+    scanGain.connect(master);
 
-    sweep.start(now + 0.03);
-    sweep.stop(now + 0.27);
+    scan.start(now + 0.08);
+    scan.stop(now + 0.48);
 
-    const confirm = audioContext.createOscillator();
-    const confirmGain = audioContext.createGain();
+    // Low confirmation
+    const low = audioContext.createOscillator();
+    const lowGain = audioContext.createGain();
 
-    confirm.type = "sine";
-    confirm.frequency.setValueAtTime(784, now + 0.23);
-    confirm.frequency.setValueAtTime(1047, now + 0.36);
+    low.type = "triangle";
+    low.frequency.setValueAtTime(165, now + 0.43);
 
-    confirmGain.gain.setValueAtTime(0.0001, now + 0.23);
-    confirmGain.gain.exponentialRampToValueAtTime(0.09, now + 0.25);
-    confirmGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.58);
+    lowGain.gain.setValueAtTime(0.0001, now + 0.43);
+    lowGain.gain.exponentialRampToValueAtTime(0.18, now + 0.48);
+    lowGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.88);
 
-    confirm.connect(confirmGain);
-    confirmGain.connect(master);
+    low.connect(lowGain);
+    lowGain.connect(master);
 
-    confirm.start(now + 0.23);
-    confirm.stop(now + 0.6);
+    low.start(now + 0.43);
+    low.stop(now + 0.9);
 
-    const bass = audioContext.createOscillator();
-    const bassGain = audioContext.createGain();
+    // ACCESS GRANTED - first tone
+    const confirmOne = audioContext.createOscillator();
+    const confirmOneGain = audioContext.createGain();
 
-    bass.type = "triangle";
-    bass.frequency.setValueAtTime(220, now + 0.24);
+    confirmOne.type = "sine";
+    confirmOne.frequency.setValueAtTime(740, now + 0.5);
 
-    bassGain.gain.setValueAtTime(0.0001, now + 0.24);
-    bassGain.gain.exponentialRampToValueAtTime(0.045, now + 0.27);
-    bassGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+    confirmOneGain.gain.setValueAtTime(0.0001, now + 0.5);
+    confirmOneGain.gain.exponentialRampToValueAtTime(0.34, now + 0.54);
+    confirmOneGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.83);
 
-    bass.connect(bassGain);
-    bassGain.connect(master);
+    confirmOne.connect(confirmOneGain);
+    confirmOneGain.connect(master);
 
-    bass.start(now + 0.24);
-    bass.stop(now + 0.57);
+    confirmOne.start(now + 0.5);
+    confirmOne.stop(now + 0.85);
+
+    // ACCESS GRANTED - final tone
+    const confirmTwo = audioContext.createOscillator();
+    const confirmTwoGain = audioContext.createGain();
+
+    confirmTwo.type = "sine";
+    confirmTwo.frequency.setValueAtTime(988, now + 0.67);
+
+    confirmTwoGain.gain.setValueAtTime(0.0001, now + 0.67);
+    confirmTwoGain.gain.exponentialRampToValueAtTime(0.4, now + 0.71);
+    confirmTwoGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.08);
+
+    confirmTwo.connect(confirmTwoGain);
+    confirmTwoGain.connect(master);
+
+    confirmTwo.start(now + 0.67);
+    confirmTwo.stop(now + 1.1);
 
     setTimeout(() => {
       audioContext.close().catch(() => {});
-    }, 800);
+    }, 1500);
   } catch (error) {
-    console.warn("Unable to play confirmation sound:", error);
+    console.warn("Unable to play access sound:", error);
   }
 }
 
@@ -102,7 +143,12 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
+  const [authenticationStage, setAuthenticationStage] = useState(0);
+  const [logLines, setLogLines] = useState([]);
 
+  /*
+   * Clock
+   */
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
@@ -141,73 +187,493 @@ export default function Login() {
     return () => clearInterval(interval);
   }, []);
 
+  /*
+   * Authentication terminal animation
+   */
+  useEffect(() => {
+    if (!loading) return;
+
+    const stages = [
+      {
+        delay: 400,
+        stage: 1,
+        log: "AUTH REQUEST RECEIVED",
+      },
+      {
+        delay: 1100,
+        stage: 2,
+        log: "OFFICER CREDENTIALS VERIFIED",
+      },
+      {
+        delay: 1900,
+        stage: 3,
+        log: "CLEARANCE LEVEL VALIDATED",
+      },
+      {
+        delay: 2750,
+        stage: 4,
+        log: "SECURE SESSION ESTABLISHED",
+      },
+    ];
+
+    const timers = stages.map((item) =>
+      setTimeout(() => {
+        setAuthenticationStage(item.stage);
+
+        setLogLines((previous) => [
+          ...previous,
+          item.log,
+        ]);
+      }, item.delay)
+    );
+
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+  }, [loading]);
+
+  /*
+   * Login
+   */
   const submit = async (event) => {
     event.preventDefault();
 
-    if (!username.trim() || !password) {
+    if (loading) return;
+
+    const cleanUsername = username.trim();
+
+    if (!cleanUsername || !password) {
       setError("All tactical entry credentials required.");
       return;
     }
 
     setError("");
     setLoading(true);
+    setAuthenticationStage(0);
+    setLogLines([]);
 
-    let audioContext = null;
+    const audioContext = createAudioContext();
 
     try {
-      const AudioContextClass =
-        window.AudioContext || window.webkitAudioContext;
-
-      if (AudioContextClass) {
-        audioContext = new AudioContextClass();
-
-        if (audioContext.state === "suspended") {
-          await audioContext.resume();
-        }
+      /*
+       * Start audio immediately from the user interaction.
+       */
+      if (audioContext?.state === "suspended") {
+        await audioContext.resume();
       }
-    } catch (audioError) {
-      console.warn(
-        "Unable to initialise confirmation audio:",
-        audioError
-      );
-    }
 
-    try {
-      const result = await authContext.login(
-        username.trim(),
+      /*
+       * Give the AuthContext a hard timeout.
+       *
+       * This prevents the terminal from remaining on-screen forever
+       * if the backend/API is unreachable.
+       */
+      const loginPromise = authContext.login(
+        cleanUsername,
         password
       );
 
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(
+            new Error(
+              "Authentication server did not respond. Please try again."
+            )
+          );
+        }, 15000);
+      });
+
+      const result = await Promise.race([
+        loginPromise,
+        timeoutPromise,
+      ]);
+
+      /*
+       * Backend explicitly rejected the credentials.
+       */
       if (result && result.ok === false) {
         audioContext?.close().catch(() => {});
 
         setLoading(false);
+        setAuthenticationStage(0);
+        setLogLines([]);
+
         setError(
-          result.error || "Invalid credentials. Access denied."
+          result.error ||
+            "Invalid credentials. Access denied."
         );
 
         return;
       }
 
-      playSuccessSound(audioContext);
+      /*
+       * Authentication succeeded.
+       *
+       * Allow the terminal animation to finish before redirecting.
+       */
+      await new Promise((resolve) =>
+        setTimeout(resolve, 3600)
+      );
 
-      setTimeout(() => {
-        window.location.href = "/cases";
-      }, 650);
+      setAuthenticationStage(5);
+
+      setLogLines((previous) => [
+        ...previous,
+        "COMMAND ACCESS AUTHORISED",
+        "SESSION CLEARANCE: GRANTED",
+      ]);
+
+      playAccessGrantedSound(audioContext);
+
+      /*
+       * Allow the confirmation sound to finish.
+       */
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1150)
+      );
+
+      /*
+       * Complete the actual application login.
+       */
+      if (typeof authContext.completeLogin === "function") {
+        authContext.completeLogin();
+      } else {
+        /*
+         * If completeLogin is missing, don't leave the
+         * application stuck in the loading screen.
+         */
+        throw new Error(
+          "Authentication succeeded, but the session could not be completed."
+        );
+      }
     } catch (err) {
+      console.error("SCC LOGIN ERROR:", err);
+
       audioContext?.close().catch(() => {});
 
       setLoading(false);
+      setAuthenticationStage(0);
+      setLogLines([]);
 
-      setError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.message ||
-          err?.message ||
-          "Authentication failed. Access denied."
-      );
+      /*
+       * Try to give the user the actual backend/network error.
+       */
+      let message =
+        "Authentication failed. Access denied.";
+
+      if (
+        err?.response?.data?.detail
+      ) {
+        message = err.response.data.detail;
+      } else if (
+        err?.response?.data?.message
+      ) {
+        message = err.response.data.message;
+      } else if (
+        err?.code === "ERR_NETWORK"
+      ) {
+        message =
+          "Unable to contact the authentication server. Check the backend connection.";
+      } else if (
+        err?.message?.toLowerCase().includes("network")
+      ) {
+        message =
+          "Unable to contact the authentication server. Check the backend connection.";
+      } else if (err?.message) {
+        message = err.message;
+      }
+
+      setError(message);
     }
   };
 
+  /*
+   * AUTHENTICATION TERMINAL
+   */
+  if (loading) {
+    return (
+      <div
+        className="min-h-screen bg-[#020813] flex items-center justify-center px-6 relative font-sans antialiased text-[#e7edf6] overflow-hidden"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(20, 35, 60, 0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 35, 60, 0.4) 1px, transparent 1px)",
+          backgroundSize: "36px 36px",
+        }}
+      >
+        <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-[#030d1e]/40 to-[#020813]" />
+
+        <div className="absolute left-0 right-0 top-0 h-px bg-[#d4b25a]/30 shadow-[0_0_20px_rgba(212,178,90,0.35)] animate-[scan_3s_linear_infinite]" />
+
+        <div className="relative z-10 w-full max-w-2xl">
+          <div className="text-center mb-8">
+            <div className="flex items-center justify-center gap-3 mb-3">
+              <Terminal className="h-4 w-4 text-[#d4b25a]" />
+
+              <p className="font-mono text-[10px] uppercase tracking-[0.35em] text-[#6f849f]">
+                SCC SECURE AUTHENTICATION NODE
+              </p>
+
+              <Terminal className="h-4 w-4 text-[#d4b25a]" />
+            </div>
+
+            <h1
+              className={`font-mono text-3xl sm:text-4xl font-bold uppercase tracking-[0.18em] transition-all duration-500 ${
+                authenticationStage >= 5
+                  ? "text-[#d4b25a] drop-shadow-[0_0_20px_rgba(212,178,90,0.35)]"
+                  : "text-[#e7edf6]"
+              }`}
+            >
+              {authenticationStage >= 5
+                ? "ACCESS GRANTED"
+                : "AUTHENTICATING..."}
+            </h1>
+
+            <p className="mt-2 font-mono text-[9px] uppercase tracking-[0.25em] text-[#556a86]">
+              STATE CRIME COMMAND // RESTRICTED NETWORK
+            </p>
+          </div>
+
+          <div className="border border-[#142c4d] bg-[#071326]/80 backdrop-blur-md shadow-[0_25px_80px_-20px_rgba(0,0,0,0.9)]">
+            <div className="flex items-center justify-between border-b border-[#142c4d] px-4 py-3 bg-[#081528]">
+              <div className="flex items-center gap-2">
+                <Activity className="h-3.5 w-3.5 text-[#d4b25a]" />
+
+                <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-[#8ba0bd]">
+                  AUTHENTICATION PROTOCOL
+                </span>
+              </div>
+
+              <span className="font-mono text-[8px] uppercase tracking-[0.15em] text-[#d4b25a]">
+                NODE: SYD-04
+              </span>
+            </div>
+
+            <div className="p-5 sm:p-7">
+              <div className="mb-7">
+                <div className="flex justify-between mb-2">
+                  <span className="font-mono text-[8px] uppercase tracking-[0.2em] text-[#556a86]">
+                    SYSTEM PROGRESS
+                  </span>
+
+                  <span className="font-mono text-[8px] uppercase tracking-[0.2em] text-[#d4b25a]">
+                    {authenticationStage >= 5
+                      ? "100%"
+                      : `${Math.min(
+                          authenticationStage * 24,
+                          88
+                        )}%`}
+                  </span>
+                </div>
+
+                <div className="h-1 bg-[#0b1b33] border border-[#142c4d] overflow-hidden">
+                  <div
+                    className="h-full bg-[#d4b25a] transition-all duration-700 ease-out shadow-[0_0_12px_rgba(212,178,90,0.5)]"
+                    style={{
+                      width:
+                        authenticationStage >= 5
+                          ? "100%"
+                          : `${Math.min(
+                              authenticationStage * 24,
+                              88
+                            )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {[
+                  {
+                    icon: Radio,
+                    text: "Verifying officer credentials",
+                  },
+                  {
+                    icon: Lock,
+                    text: "Validating clearance level",
+                  },
+                  {
+                    icon: Database,
+                    text: "Establishing secure session",
+                  },
+                  {
+                    icon: ShieldCheck,
+                    text: "Synchronising command access",
+                  },
+                ].map((item, index) => {
+                  const Icon = item.icon;
+                  const stage = index + 1;
+
+                  const complete =
+                    authenticationStage >= stage;
+
+                  return (
+                    <div
+                      key={item.text}
+                      className={`flex items-center gap-3 border px-3 py-3 transition-all duration-500 ${
+                        complete
+                          ? "border-[#d4b25a]/25 bg-[#d4b25a]/[0.035] text-[#d4b25a]"
+                          : "border-[#102440] text-[#43556e]"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+
+                      <span className="font-mono text-[9px] uppercase tracking-[0.15em]">
+                        {item.text}
+                      </span>
+
+                      <span className="ml-auto font-mono text-[8px] uppercase tracking-wider">
+                        {complete ? (
+                          <span className="flex items-center gap-2">
+                            <CheckCircle2 className="h-3 w-3" />
+                            VERIFIED
+                          </span>
+                        ) : stage === authenticationStage + 1 ? (
+                          <span className="animate-pulse">
+                            PROCESSING
+                          </span>
+                        ) : (
+                          "PENDING"
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-[#142c4d] mt-7 border border-[#142c4d]">
+                {[
+                  ["SECURE CHANNEL", "ACTIVE"],
+                  ["AUTH NODE", "SYD-04"],
+                  ["CLEARANCE", "RESTRICTED"],
+                  [
+                    "SESSION",
+                    authenticationStage >= 5
+                      ? "AUTHORISED"
+                      : "PENDING",
+                  ],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="bg-[#071326] px-3 py-3"
+                  >
+                    <p className="font-mono text-[7px] uppercase tracking-[0.16em] text-[#556a86]">
+                      {label}
+                    </p>
+
+                    <p className="font-mono text-[8px] uppercase tracking-[0.12em] text-[#8ba0bd] mt-1">
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-7 border border-[#142c4d] bg-[#040b15]">
+                <div className="flex items-center gap-2 border-b border-[#142c4d] px-3 py-2">
+                  <Terminal className="h-3 w-3 text-[#556a86]" />
+
+                  <span className="font-mono text-[8px] uppercase tracking-[0.2em] text-[#556a86]">
+                    SECURITY EVENT LOG
+                  </span>
+                </div>
+
+                <div className="p-3 min-h-[92px] font-mono text-[8px] uppercase tracking-[0.12em]">
+                  {logLines.map((line, index) => (
+                    <div
+                      key={`${line}-${index}`}
+                      className="flex gap-3 py-1 text-[#6f849f]"
+                    >
+                      <span className="text-[#33455f]">
+                        [{String(index + 1).padStart(2, "0")}]
+                      </span>
+
+                      <span
+                        className={
+                          authenticationStage >= 5 &&
+                          index >= logLines.length - 2
+                            ? "text-[#d4b25a]"
+                            : ""
+                        }
+                      >
+                        {line}
+                      </span>
+                    </div>
+                  ))}
+
+                  {authenticationStage < 5 && (
+                    <div className="flex gap-2 py-1 text-[#43556e]">
+                      <span>&gt;</span>
+
+                      <span className="animate-pulse">
+                        AWAITING PROTOCOL RESPONSE...
+                      </span>
+                    </div>
+                  )}
+
+                  {authenticationStage >= 5 && (
+                    <div className="flex gap-2 py-1 text-[#d4b25a]">
+                      <span>&gt;</span>
+
+                      <span className="animate-pulse">
+                        CLEARANCE VERIFIED // REDIRECTING
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                      authenticationStage >= 5
+                        ? "bg-[#d4b25a]"
+                        : "bg-[#e05656]"
+                    }`}
+                  />
+
+                  <span className="font-mono text-[8px] uppercase tracking-[0.18em] text-[#556a86]">
+                    {authenticationStage >= 5
+                      ? "COMMAND ACCESS AUTHORISED"
+                      : "SECURE TERMINAL // PLEASE WAIT"}
+                  </span>
+                </div>
+
+                <div className="font-mono text-[8px] uppercase tracking-[0.15em] text-[#43556e]">
+                  {timeStr} // AEST // SYDNEY
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <style>{`
+          @keyframes scan {
+            0% {
+              transform: translateY(0);
+              opacity: 0;
+            }
+
+            10% {
+              opacity: 1;
+            }
+
+            90% {
+              opacity: 1;
+            }
+
+            100% {
+              transform: translateY(100vh);
+              opacity: 0;
+            }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  /*
+   * NORMAL LOGIN SCREEN
+   */
   return (
     <div
       className="min-h-screen bg-[#020813] flex items-center justify-center px-4 py-10 relative font-sans antialiased text-[#e7edf6]"
@@ -272,10 +738,15 @@ export default function Login() {
 
           <div className="mt-4 flex items-center justify-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-[#6f849f]">
             <span className="h-1.5 w-1.5 rounded-full bg-[#e05656] animate-pulse" />
+
             <span>Secure Terminal</span>
+
             <span className="text-[#33455f]">//</span>
+
             <span>Clearance: Restricted</span>
+
             <span className="text-[#33455f]">//</span>
+
             <span>Sector: Sydney</span>
           </div>
         </div>
@@ -313,7 +784,8 @@ export default function Login() {
                 }
                 placeholder="ENTER USERNAME"
                 autoComplete="username"
-                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors uppercase tracking-wider font-mono"
+                disabled={loading}
+                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors uppercase tracking-wider font-mono disabled:opacity-60"
               />
             </div>
           </div>
@@ -334,7 +806,8 @@ export default function Login() {
                 }
                 placeholder="ENTER ACCESS CODE"
                 autoComplete="current-password"
-                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors tracking-wider font-mono"
+                disabled={loading}
+                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors tracking-wider font-mono disabled:opacity-60"
               />
             </div>
           </div>
@@ -342,6 +815,7 @@ export default function Login() {
           {error && (
             <div className="flex items-start gap-2 rounded-md border border-[#7f2f38] bg-[#3a1117]/40 px-3 py-2.5 text-xs text-[#f0a4aa]">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+
               <span>{error}</span>
             </div>
           )}
@@ -351,17 +825,8 @@ export default function Login() {
             disabled={loading}
             className="w-full rounded-md bg-[#d4b25a] text-[#071326] py-2.5 text-sm font-bold uppercase tracking-widest transition-all hover:bg-[#e2c46f] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Verifying clearance...
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="h-4 w-4" />
-                Access System
-              </>
-            )}
+            <ShieldCheck className="h-4 w-4" />
+            Authenticate
           </button>
 
           <p className="text-[9px] text-center text-[#556a86] uppercase tracking-wider">
@@ -373,9 +838,13 @@ export default function Login() {
           <div className="border-t border-[#142c4d] pt-4 text-center">
             <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#6f849f]">
               <span>{timeStr}</span>
+
               <span className="mx-2 text-[#33455f]">•</span>
+
               <span>AEST</span>
+
               <span className="mx-2 text-[#33455f]">•</span>
+
               <span>Sydney</span>
             </div>
 
@@ -392,6 +861,28 @@ export default function Login() {
           and are used for non-commercial roleplay only.
         </p>
       </div>
+
+      <style>{`
+        @keyframes scan {
+          0% {
+            transform: translateY(0);
+            opacity: 0;
+          }
+
+          10% {
+            opacity: 1;
+          }
+
+          90% {
+            opacity: 1;
+          }
+
+          100% {
+            transform: translateY(100vh);
+            opacity: 0;
+          }
+        }
+      `}</style>
     </div>
   );
 }

@@ -40,7 +40,7 @@ ACCOUNTS = {
     },
 }
 
-DIVISIONS = ["Organised Crime Squad", "Strike Force Raptor", "Drugs & Firearms Squad"]
+DIVISIONS = ["Organised Crime Squad", "Strike Force Raptor", "Both"]
 STATUSES = ["pending", "opened", "closed"]
 PRIORITIES = ["routine", "urgent", "high-risk"]
 
@@ -478,7 +478,8 @@ async def seed_cases():
 
 @app.on_event("startup")
 async def startup():
-    await seed_cases()
+ 
+ pass
 
 
 app.include_router(api_router)
