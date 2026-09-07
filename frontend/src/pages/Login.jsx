@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { useNavigate } from "react-router-dom";
 import {
   Lock,
   User,
+  BadgeCheck,
   Loader2,
   AlertTriangle,
   ShieldCheck,
@@ -37,31 +39,12 @@ const AUTH_STAGES = [
   },
 ];
 
-/*
- * LOCAL SCC CREDENTIALS
- *
- * These accounts are handled entirely inside Login.jsx.
- * They must NEVER be sent to the live authentication endpoint.
- */
-const LOCAL_CREDENTIALS = {
-  ADMIN: {
-    password: "ADMINSCC2026!",
-    role: "admin",
-  },
-
-  DETECTIVE: {
-    password: "NSWPFSCC2026",
-    role: "detective",
-  },
-};
-
 const sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function playAccessGrantedSound() {
   try {
-    const AudioContext =
-      window.AudioContext || window.webkitAudioContext;
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
 
     if (!AudioContext) {
       return;
@@ -69,61 +52,83 @@ function playAccessGrantedSound() {
 
     const audioContext = new AudioContext();
 
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
+    const oscillatorOne = audioContext.createOscillator();
+    const oscillatorTwo = audioContext.createOscillator();
 
-    oscillator.type = "sine";
+    const gainOne = audioContext.createGain();
+    const gainTwo = audioContext.createGain();
 
-    oscillator.frequency.setValueAtTime(
-      520,
-      audioContext.currentTime
-    );
+    oscillatorOne.type = "sine";
+    oscillatorTwo.type = "sine";
 
-    oscillator.frequency.linearRampToValueAtTime(
+    oscillatorOne.frequency.setValueAtTime(520, audioContext.currentTime);
+
+    oscillatorOne.frequency.linearRampToValueAtTime(
       760,
-      audioContext.currentTime + 0.18
+      audioContext.currentTime + 0.18,
     );
 
-    gainNode.gain.setValueAtTime(
-      0.0001,
-      audioContext.currentTime
+    oscillatorTwo.frequency.setValueAtTime(
+      740,
+      audioContext.currentTime + 0.18,
     );
 
-    gainNode.gain.exponentialRampToValueAtTime(
+    oscillatorTwo.frequency.linearRampToValueAtTime(
+      988,
+      audioContext.currentTime + 0.36,
+    );
+
+    gainOne.gain.setValueAtTime(0.0001, audioContext.currentTime);
+
+    gainOne.gain.exponentialRampToValueAtTime(
       0.12,
-      audioContext.currentTime + 0.02
+      audioContext.currentTime + 0.02,
     );
 
-    gainNode.gain.exponentialRampToValueAtTime(
+    gainOne.gain.exponentialRampToValueAtTime(
       0.0001,
-      audioContext.currentTime + 0.45
+      audioContext.currentTime + 0.45,
     );
 
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    gainTwo.gain.setValueAtTime(0.0001, audioContext.currentTime + 0.18);
 
-    oscillator.start();
-
-    oscillator.stop(
-      audioContext.currentTime + 0.45
+    gainTwo.gain.exponentialRampToValueAtTime(
+      0.1,
+      audioContext.currentTime + 0.2,
     );
 
-    oscillator.addEventListener("ended", () => {
+    gainTwo.gain.exponentialRampToValueAtTime(
+      0.0001,
+      audioContext.currentTime + 0.65,
+    );
+
+    oscillatorOne.connect(gainOne);
+    gainOne.connect(audioContext.destination);
+
+    oscillatorTwo.connect(gainTwo);
+    gainTwo.connect(audioContext.destination);
+
+    oscillatorOne.start();
+    oscillatorTwo.start(audioContext.currentTime + 0.18);
+
+    oscillatorOne.stop(audioContext.currentTime + 0.45);
+    oscillatorTwo.stop(audioContext.currentTime + 0.65);
+
+    oscillatorTwo.addEventListener("ended", () => {
       audioContext.close().catch(() => {});
     });
   } catch (error) {
-    console.warn(
-      "Access granted sound could not be played:",
-      error
-    );
+    console.warn("Access granted sound could not be played:", error);
   }
 }
 
 export default function Login() {
   const authContext = useAuth();
+  const navigate = useNavigate();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [officerId, setOfficerId] = useState("");
 
   const [error, setError] = useState("");
 
@@ -134,7 +139,6 @@ export default function Login() {
 
   const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
-
   const [logLines, setLogLines] = useState([]);
 
   /*
@@ -152,12 +156,7 @@ export default function Login() {
         second: "2-digit",
       };
 
-      setTimeStr(
-        now.toLocaleTimeString(
-          "en-AU",
-          timeOptions
-        )
-      );
+      setTimeStr(now.toLocaleTimeString("en-AU", timeOptions));
 
       const dateOptions = {
         timeZone: "Australia/Sydney",
@@ -167,67 +166,25 @@ export default function Login() {
         year: "numeric",
       };
 
-      setDateStr(
-        now
-          .toLocaleDateString(
-            "en-AU",
-            dateOptions
-          )
-          .toUpperCase()
-      );
+      setDateStr(now.toLocaleDateString("en-AU", dateOptions).toUpperCase());
     };
 
     updateClock();
 
-    const interval = setInterval(
-      updateClock,
-      1000
-    );
+    const interval = setInterval(updateClock, 1000);
 
     return () => clearInterval(interval);
   }, []);
 
   /*
-   * Add a line to the authentication event log.
+   * Authentication event log
    */
   const addLog = (message) => {
-    const timestamp =
-      new Date().toLocaleTimeString(
-        "en-AU",
-        {
-          hour12: false,
-        }
-      );
+    const timestamp = new Date().toLocaleTimeString("en-AU", {
+      hour12: false,
+    });
 
-    setLogLines((previous) => [
-      ...previous,
-      `[${timestamp}] ${message}`,
-    ]);
-  };
-
-  /*
-   * Create the local SCC clearance session.
-   */
-  const saveLocalClearance = (
-    officerId,
-    role
-  ) => {
-    const authenticatedUser = {
-      username: officerId,
-      role,
-    };
-
-    localStorage.setItem(
-      "scc_token",
-      "clearance_approved_bypass_token"
-    );
-
-    localStorage.setItem(
-      "scc_user",
-      JSON.stringify(authenticatedUser)
-    );
-
-    return authenticatedUser;
+    setLogLines((previous) => [...previous, `[${timestamp}] ${message}`]);
   };
 
   /*
@@ -236,76 +193,49 @@ export default function Login() {
    * 00% → 25% → 50% → 75% → 100%
    */
   const runAuthenticationSequence = async () => {
-    for (
-      let index = 0;
-      index < AUTH_STAGES.length;
-      index++
-    ) {
+    for (let index = 0; index < AUTH_STAGES.length; index++) {
       const stage = AUTH_STAGES[index];
 
       setStageIndex(index);
       setProgress(stage.progress);
 
-      addLog(
-        `${stage.code} ${stage.text}... PROCESSING`
-      );
+      addLog(`${stage.code} ${stage.text}... PROCESSING`);
 
       await sleep(850);
 
-      addLog(
-        `${stage.code} ${stage.text}... COMPLETE`
-      );
+      addLog(`${stage.code} ${stage.text}... COMPLETE`);
 
-      if (
-        index <
-        AUTH_STAGES.length - 1
-      ) {
+      if (index < AUTH_STAGES.length - 1) {
         await sleep(250);
       }
     }
 
     setProgress(100);
-
-    setStageIndex(
-      AUTH_STAGES.length - 1
-    );
-
+    setStageIndex(AUTH_STAGES.length - 1);
     setAccessGranted(true);
 
-    addLog(
-      "SECURE SESSION ESTABLISHED"
-    );
-
-    addLog(
-      "ACCESS GRANTED — COMMAND TERMINAL READY"
-    );
+    addLog("SECURE SESSION ESTABLISHED");
+    addLog("ACCESS GRANTED — COMMAND TERMINAL READY");
 
     playAccessGrantedSound();
 
     await sleep(1100);
 
     /*
-     * AuthContext can perform the final application
-     * transition if it exposes completeLogin().
+     * Update AuthContext using the real authenticated session.
      */
-    if (
-      typeof authContext?.completeLogin ===
-      "function"
-    ) {
+    if (typeof authContext?.completeLogin === "function") {
       authContext.completeLogin();
-      return;
     }
 
     /*
-     * Fallback navigation.
+     * Navigate directly to the protected cases page.
      */
-    window.location.assign("/cases");
+    navigate("/cases", { replace: true });
   };
 
   /*
-   * =====================================================
-   * FORM SUBMISSION
-   * =====================================================
+   * Form submission
    */
   const submit = async (e) => {
     e.preventDefault();
@@ -314,41 +244,12 @@ export default function Login() {
       return;
     }
 
-    /*
-     * IMPORTANT:
-     *
-     * Username is explicitly converted to uppercase
-     * BEFORE the local credential check.
-     *
-     * This means:
-     *
-     * detective
-     * Detective
-     * DETECTIVE
-     *
-     * all become:
-     *
-     * DETECTIVE
-     */
-    const checkUser = username
-      .trim()
-      .toUpperCase();
+    const cleanUsername = username.trim();
+    const cleanPassword = password.trim();
+    const cleanOfficerId = officerId.trim();
 
-    /*
-     * Password remains case-sensitive.
-     *
-     * Only surrounding whitespace is removed.
-     */
-    const checkPass = password.trim();
-
-    /*
-     * Validate required fields.
-     */
-    if (!checkUser || !checkPass) {
-      setError(
-        "All tactical entry credentials required."
-      );
-
+    if (!cleanUsername || !cleanPassword || !cleanOfficerId) {
+      setError("Username, access code, and officer ID are required.");
       return;
     }
 
@@ -359,124 +260,34 @@ export default function Login() {
     setAccessGranted(false);
     setLogLines([]);
 
-    /*
-     * =====================================================
-     * LOCAL SCC CLEARANCE OVERRIDE
-     * =====================================================
-     *
-     * THIS CHECK MUST HAPPEN BEFORE authContext.login().
-     *
-     * Therefore:
-     *
-     * ADMIN / ADMINSCC2026!
-     *
-     * and
-     *
-     * DETECTIVE / NSWPFSCC2026
-     *
-     * NEVER reach the live database endpoint.
-     */
-
-    const localAccount =
-      LOCAL_CREDENTIALS[checkUser];
-
-    if (
-      localAccount &&
-      checkPass === localAccount.password
-    ) {
-      try {
-        /*
-         * Create the local authenticated session.
-         */
-        saveLocalClearance(
-          checkUser,
-          localAccount.role
-        );
-
-        addLog(
-          "LOCAL CLEARANCE DATABASE MATCH"
-        );
-
-        addLog(
-          "BACKEND AUTHENTICATION BYPASSED"
-        );
-
-        /*
-         * Give React one render cycle so the
-         * authentication terminal appears before
-         * the sequence starts.
-         */
-        await new Promise((resolve) => {
-          requestAnimationFrame(resolve);
-        });
-
-        /*
-         * Start the visual authentication sequence.
-         */
-        await runAuthenticationSequence();
-
-        return;
-      } catch (err) {
-        console.error(
-          "Local authentication error:",
-          err
-        );
-
-        setLoading(false);
-        setProgress(0);
-        setStageIndex(0);
-        setAccessGranted(false);
-
-        setError(
-          "Local clearance authentication failed."
-        );
-
-        return;
-      }
-    }
-
-    /*
-     * =====================================================
-     * BACKEND / DATABASE AUTHENTICATION
-     * =====================================================
-     *
-     * Only non-local accounts reach this section.
-     */
     try {
       const loginFunc =
-        authContext?.login ||
-        authContext?.loginUser ||
-        authContext?.signIn;
+        authContext?.login || authContext?.loginUser || authContext?.signIn;
 
-      if (
-        typeof loginFunc !== "function"
-      ) {
-        throw new Error(
-          "Authentication service layer unavailable."
-        );
+      if (typeof loginFunc !== "function") {
+        throw new Error("Authentication service layer unavailable.");
       }
 
+      addLog("AUTHENTICATION REQUEST INITIALISED");
+      addLog("OFFICER IDENTIFIER RECORDED");
+
       /*
-       * Only non-local accounts are allowed to
-       * contact the backend.
+       * REAL BACKEND AUTHENTICATION
        *
-       * A 5-second timeout prevents the login screen
-       * from hanging indefinitely.
+       * Username + access code are verified by the
+       * backend. Officer ID is stored with the session
+       * for operator/audit identification.
        */
       const result = await Promise.race([
-        loginFunc(
-          checkUser,
-          checkPass
-        ),
+        loginFunc(cleanUsername, cleanPassword, cleanOfficerId),
 
         new Promise((resolve) => {
           setTimeout(() => {
             resolve({
               ok: false,
-              error:
-                "Authentication request timed out.",
+              error: "Authentication request timed out.",
             });
-          }, 5000);
+          }, 15000);
         }),
       ]);
 
@@ -484,23 +295,17 @@ export default function Login() {
         setLoading(false);
         setProgress(0);
         setStageIndex(0);
+        setAccessGranted(false);
+        setLogLines([]);
 
-        setError(
-          result?.error ||
-            "Invalid credentials. Access denied."
-        );
+        setError(result?.error || "Invalid credentials. Access denied.");
 
         return;
       }
 
-      /*
-       * Backend authentication succeeded.
-       *
-       * Run the same visual authentication sequence.
-       */
-      addLog(
-        "DATABASE CREDENTIALS VERIFIED"
-      );
+      addLog("DATABASE CREDENTIALS VERIFIED");
+
+      addLog("OFFICER IDENTIFIER ACCEPTED");
 
       await new Promise((resolve) => {
         requestAnimationFrame(resolve);
@@ -508,32 +313,23 @@ export default function Login() {
 
       await runAuthenticationSequence();
     } catch (err) {
-      console.error(
-        "SCC authentication error:",
-        err
-      );
+      console.error("SCC authentication error:", err);
 
       setLoading(false);
       setProgress(0);
       setStageIndex(0);
       setAccessGranted(false);
+      setLogLines([]);
 
-      setError(
-        err?.message ||
-          "Authentication service unavailable."
-      );
+      setError(err?.message || "Authentication service unavailable.");
     }
   };
 
   /*
-   * =====================================================
    * SECURE AUTHENTICATION TERMINAL
-   * =====================================================
    */
   if (loading) {
-    const currentStage =
-      AUTH_STAGES[stageIndex] ||
-      AUTH_STAGES[0];
+    const currentStage = AUTH_STAGES[stageIndex] || AUTH_STAGES[0];
 
     return (
       <div
@@ -548,7 +344,6 @@ export default function Login() {
 
         <div className="w-full max-w-2xl relative z-10">
           <div className="border border-[#142c4d] bg-[#071326]/90 rounded-sm shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)] backdrop-blur-md overflow-hidden">
-
             {/* TERMINAL HEADER */}
             <div className="border-b border-[#142c4d] px-5 py-4 flex items-center justify-between">
               <div>
@@ -569,7 +364,6 @@ export default function Login() {
 
             {/* TERMINAL BODY */}
             <div className="p-6 sm:p-8">
-
               {/* AUTH STATUS */}
               <div className="text-center mb-8">
                 {!accessGranted ? (
@@ -607,11 +401,7 @@ export default function Login() {
                   </span>
 
                   <span className="text-sm font-bold text-[#d4b25a]">
-                    {String(progress).padStart(
-                      2,
-                      "0"
-                    )}
-                    %
+                    {String(progress).padStart(2, "0")}%
                   </span>
                 </div>
 
@@ -651,45 +441,33 @@ export default function Login() {
                     // SCC AUTHENTICATION EVENT LOG
                   </div>
 
-                  {logLines.map(
-                    (line, index) => (
-                      <div
-                        key={`${line}-${index}`}
-                        className={
-                          line.includes("GRANTED") ||
-                          line.includes("COMPLETE") ||
-                          line.includes("MATCH") ||
-                          line.includes("BYPASSED")
-                            ? "text-[#d4b25a]"
-                            : "text-[#8ba0bd]"
-                        }
-                      >
-                        {line}
-                      </div>
-                    )
-                  )}
+                  {logLines.map((line, index) => (
+                    <div
+                      key={`${line}-${index}`}
+                      className={
+                        line.includes("GRANTED") ||
+                        line.includes("COMPLETE") ||
+                        line.includes("VERIFIED") ||
+                        line.includes("ACCEPTED")
+                          ? "text-[#d4b25a]"
+                          : "text-[#8ba0bd]"
+                      }
+                    >
+                      {line}
+                    </div>
+                  ))}
 
                   {!accessGranted && (
-                    <div className="text-[#d4b25a] animate-pulse">
-                      _
-                    </div>
+                    <div className="text-[#d4b25a] animate-pulse">_</div>
                   )}
                 </div>
               </div>
 
               {/* TERMINAL FOOTER */}
               <div className="mt-6 flex items-center justify-between font-mono text-[9px] uppercase tracking-widest text-[#556a86]">
-                <span>
-                  NSWPF // SCC
-                </span>
-
-                <span>
-                  RESTRICTED CLEARANCE
-                </span>
-
-                <span>
-                  SYDNEY
-                </span>
+                <span>NSWPF // SCC</span>
+                <span>RESTRICTED CLEARANCE</span>
+                <span>SYDNEY</span>
               </div>
             </div>
           </div>
@@ -699,9 +477,7 @@ export default function Login() {
   }
 
   /*
-   * =====================================================
    * LOGIN SCREEN
-   * =====================================================
    */
   return (
     <div
@@ -715,7 +491,6 @@ export default function Login() {
       <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-[#030d1e]/40 to-[#020813]" />
 
       <div className="w-full max-w-md flex flex-col items-center relative z-10">
-
         {/* BRANDING */}
         <div className="mb-7 relative flex flex-col items-center w-full">
           <div className="relative p-2 flex items-center justify-center mb-4">
@@ -770,25 +545,15 @@ export default function Login() {
           <div className="mt-4 flex items-center justify-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-[#6f849f]">
             <span className="h-1.5 w-1.5 rounded-full bg-[#e05656] animate-pulse" />
 
-            <span>
-              Secure Terminal
-            </span>
+            <span>Secure Terminal</span>
 
-            <span className="text-[#33455f]">
-              //
-            </span>
+            <span className="text-[#33455f]">//</span>
 
-            <span>
-              Clearance: Restricted
-            </span>
+            <span>Clearance: Restricted</span>
 
-            <span className="text-[#33455f]">
-              //
-            </span>
+            <span className="text-[#33455f]">//</span>
 
-            <span>
-              Sector: Sydney
-            </span>
+            <span>Sector: Sydney</span>
           </div>
         </div>
 
@@ -810,10 +575,10 @@ export default function Login() {
             <div className="h-px w-16 bg-[#d4b25a]/50 mx-auto mt-3" />
           </div>
 
-          {/* OFFICER ID */}
+          {/* USERNAME */}
           <div className="space-y-1.5">
             <label className="text-[11px] uppercase tracking-widest text-[#8ba0bd] block font-medium">
-              Officer ID
+              Username
             </label>
 
             <div className="relative">
@@ -823,9 +588,7 @@ export default function Login() {
                 type="text"
                 value={username}
                 onChange={(e) => {
-                  setUsername(
-                    e.target.value
-                  );
+                  setUsername(e.target.value);
 
                   if (error) {
                     setError("");
@@ -852,9 +615,7 @@ export default function Login() {
                 type="password"
                 value={password}
                 onChange={(e) => {
-                  setPassword(
-                    e.target.value
-                  );
+                  setPassword(e.target.value);
 
                   if (error) {
                     setError("");
@@ -863,9 +624,40 @@ export default function Login() {
                 placeholder="ENTER ACCESS CODE"
                 autoComplete="current-password"
                 disabled={loading}
-                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors tracking-wider disabled:opacity-60"
+                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors tracking-wider font-mono disabled:opacity-60"
               />
             </div>
+          </div>
+
+          {/* OFFICER ID / CALLSIGN */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] uppercase tracking-widest text-[#8ba0bd] block font-medium">
+              Officer ID / Callsign
+            </label>
+
+            <div className="relative">
+              <BadgeCheck className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6f849f]" />
+
+              <input
+                type="text"
+                value={officerId}
+                onChange={(e) => {
+                  setOfficerId(e.target.value);
+
+                  if (error) {
+                    setError("");
+                  }
+                }}
+                placeholder="ENTER OFFICER ID / CALLSIGN"
+                autoComplete="off"
+                disabled={loading}
+                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors uppercase tracking-wider font-mono disabled:opacity-60"
+              />
+            </div>
+
+            <p className="text-[9px] text-[#556a86] font-mono uppercase tracking-wider">
+              Operator identification for session auditing
+            </p>
           </div>
 
           {/* ERROR */}
@@ -873,9 +665,7 @@ export default function Login() {
             <div className="flex items-center gap-2 rounded-md border border-[#7a2f2f] bg-[#2a1414] px-3 py-2 text-sm text-[#f4a6a6] font-mono">
               <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
 
-              <span>
-                {error}
-              </span>
+              <span>{error}</span>
             </div>
           )}
 
@@ -891,33 +681,22 @@ export default function Login() {
               <ShieldCheck className="h-4 w-4" />
             )}
 
-            <span>
-              {loading
-                ? "Verifying clearance..."
-                : "Access System"}
-            </span>
+            <span>{loading ? "Verifying clearance..." : "Access System"}</span>
           </button>
 
           <p className="text-center text-[10px] text-[#556a86] leading-relaxed pt-1">
-            Authorised personnel only. All access to this
-            terminal is logged and monitored. Unauthorised
-            entry is prohibited.
+            Authorised personnel only. All access to this terminal is logged and
+            monitored. Unauthorised entry is prohibited.
           </p>
         </form>
 
         {/* FOOTER */}
         <div className="mt-6 w-full flex flex-col items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-[#556a86]">
-          <span>
-            {dateStr}
-          </span>
+          <span>{dateStr}</span>
 
-          <span>
-            {timeStr} AEST
-          </span>
+          <span>{timeStr} AEST</span>
 
-          <span className="mt-1">
-            SCC CASE FILE TRACKER
-          </span>
+          <span className="mt-1">SCC CASE FILE TRACKER</span>
         </div>
       </div>
     </div>
