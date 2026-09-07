@@ -11,111 +11,69 @@ import api, { formatApiError } from "../lib/api";
 
 const AuthContext = createContext(null);
 
-const LOCAL_CREDENTIALS = {
-  ADMIN: {
-    password: "ADMINSCC2026!",
-    role: "admin",
-  },
-  DETECTIVE: {
-    password: "NSWPFSCC2026",
-    role: "detective",
-  },
-};
-
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(undefined);
 
   useEffect(() => {
     const token = localStorage.getItem("scc_token");
-    const stored = localStorage.getItem("scc_user");
 
-    if (!token || !stored) {
+    if (!token) {
       setUser(null);
       return;
-    }
-
-    if (token === "clearance_approved_bypass_token") {
-      try {
-        setUser(JSON.parse(stored));
-        return;
-      } catch {
-        localStorage.removeItem("scc_token");
-        localStorage.removeItem("scc_user");
-        setUser(null);
-        return;
-      }
     }
 
     api
       .get("/auth/me")
       .then((res) => {
-        setUser(res.data);
+        const officerId = localStorage.getItem("scc_officer_id") || "";
+
+        const authenticatedUser = {
+          username: res.data.username,
+          role: String(res.data.role || "").toLowerCase(),
+          officer_id: officerId,
+        };
+
+        localStorage.setItem("scc_user", JSON.stringify(authenticatedUser));
+
+        setUser(authenticatedUser);
       })
       .catch(() => {
         localStorage.removeItem("scc_token");
         localStorage.removeItem("scc_user");
+        localStorage.removeItem("scc_officer_id");
         setUser(null);
       });
   }, []);
 
-  const login = useCallback(async (username, password) => {
-    const checkUser = username.trim().toUpperCase();
-    const checkPass = password.trim();
+  const login = useCallback(async (username, password, officerId = "") => {
+    const cleanUsername = username.trim().toUpperCase();
+    const cleanOfficerId = officerId.trim();
 
-    /*
-     * LOCAL SCC CLEARANCE
-     *
-     * These credentials never contact the backend.
-     */
-    const localAccount = LOCAL_CREDENTIALS[checkUser];
-
-    if (localAccount && checkPass === localAccount.password) {
-      const authenticatedUser = {
-        username: checkUser,
-        role: localAccount.role,
-      };
-
-      localStorage.setItem(
-        "scc_token",
-        "clearance_approved_bypass_token"
-      );
-
-      localStorage.setItem(
-        "scc_user",
-        JSON.stringify(authenticatedUser)
-      );
-
-      return {
-        ok: true,
-        local: true,
-        user: authenticatedUser,
-      };
-    }
-
-    /*
-     * DATABASE AUTHENTICATION
-     *
-     * Any account that isn't one of the local clearance accounts
-     * falls through to the backend.
-     */
     try {
       const { data } = await api.post("/auth/login", {
-        username: username.trim(),
+        username: cleanUsername,
         password,
       });
 
       const authenticatedUser = {
         username: data.username,
-        role: data.role,
+        role: String(data.role || "").toLowerCase(),
+        officer_id: cleanOfficerId,
       };
 
       localStorage.setItem("scc_token", data.token);
 
-      localStorage.setItem(
-        "scc_user",
-        JSON.stringify(authenticatedUser)
-      );
+      localStorage.setItem("scc_user", JSON.stringify(authenticatedUser));
 
+      if (cleanOfficerId) {
+        localStorage.setItem("scc_officer_id", cleanOfficerId);
+      } else {
+        localStorage.removeItem("scc_officer_id");
+      }
+
+      // Do not update React auth state yet.
+      // Login.jsx completes the authentication sequence first,
+      // then calls completeLogin() to activate the session.
       return {
         ok: true,
         local: false,
@@ -132,29 +90,38 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  /*
-   * Called only AFTER Login.jsx finishes its authentication terminal.
-   */
   const completeLogin = useCallback(() => {
     const stored = localStorage.getItem("scc_user");
 
-    if (stored) {
-      try {
-        setUser(JSON.parse(stored));
-      } catch {
-        setUser(null);
-        return;
-      }
+    if (!stored) {
+      setUser(null);
+      return;
     }
 
-    window.location.assign("/cases");
+    try {
+      const parsedUser = JSON.parse(stored);
+
+      const officerId =
+        parsedUser?.officer_id || localStorage.getItem("scc_officer_id") || "";
+
+      setUser({
+        ...parsedUser,
+        officer_id: officerId,
+      });
+    } catch {
+      setUser(null);
+    }
   }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem("scc_token");
     localStorage.removeItem("scc_user");
+    localStorage.removeItem("scc_officer_id");
+
     setUser(null);
   }, []);
+
+  const isAdmin = String(user?.role || "").toLowerCase() === "admin";
 
   const value = useMemo(
     () => ({
@@ -162,16 +129,12 @@ export function AuthProvider({ children }) {
       login,
       completeLogin,
       logout,
-      isAdmin: user?.role === "admin",
+      isAdmin,
     }),
-    [user, login, completeLogin, logout]
+    [user, login, completeLogin, logout, isAdmin],
   );
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export const useAuth = () => useContext(AuthContext);
