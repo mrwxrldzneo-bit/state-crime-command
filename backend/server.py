@@ -395,85 +395,14 @@ async def delete_case(case_uid: str, user: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # Seed
 # ---------------------------------------------------------------------------
-SEED_CASES = [
-    {
-        "name": "Operation Viper",
-        "lead_investigator": "Det. Sgt. J. Williams",
-        "division": "Strike Force Raptor",
-        "status": "opened",
-        "synopsis": "Ongoing surveillance of an outlaw motorcycle gang suspected of firearms trafficking across the inner-west corridor.",
-        "discord_url": "https://discord.com/channels/000000000000000000/000000000000000001",
-        "priority": "high-risk",
-    },
-    {
-        "name": "Operation Harbour Watch",
-        "lead_investigator": "Det. Snr Cst. A. Nguyen",
-        "division": "Organised Crime Squad",
-        "status": "opened",
-        "synopsis": "Investigation into a money-laundering network operating through Sydney harbourside nightclubs.",
-        "discord_url": "https://discord.com/channels/000000000000000000/000000000000000002",
-        "priority": "urgent",
-    },
-    {
-        "name": "Operation Ironbark",
-        "lead_investigator": "Det. Sgt. M. Warrant",
-        "division": "Drugs & Firearms Squad",
-        "status": "pending",
-        "synopsis": "Fresh intelligence report regarding a suspected commercial-quantity drug supply ring in the CBD. Awaiting command review.",
-        "discord_url": "https://discord.com/channels/000000000000000000/000000000000000003",
-        "priority": "urgent",
-    },
-    {
-        "name": "Operation Southern Cross",
-        "lead_investigator": "Det. Insp. R. Patel",
-        "division": "Organised Crime Squad",
-        "status": "closed",
-        "synopsis": "Concluded joint operation resulting in the dismantling of an extortion syndicate. File archived.",
-        "discord_url": "https://discord.com/channels/000000000000000000/000000000000000004",
-        "priority": "routine",
-    },
-]
+SEED_CASES = []
 
 
 async def seed_cases():
-    if await db.cases.count_documents({}) > 0:
-        return
-    year = datetime.now(timezone.utc).year
-    for i, c in enumerate(SEED_CASES, start=1):
-        ts = now_iso()
-        notes = [TimelineNote(
-            note="Case file logged by admin.",
-            author="admin",
-            kind="system",
-            created_at=ts,
-        )]
-        approved_by = "admin" if c["status"] in ("opened", "closed") else None
-        approved_at = ts if approved_by else None
-        if approved_by:
-            notes.append(TimelineNote(
-                note="Case approved and opened by admin.",
-                author="admin",
-                kind="system",
-                created_at=ts,
-            ))
-        doc = Case(
-            case_id=f"SCC-{year}-{i:03d}",
-            name=c["name"],
-            lead_investigator=c["lead_investigator"],
-            division=c["division"],
-            synopsis=c["synopsis"],
-            discord_url=c["discord_url"],
-            status=c["status"],
-            priority=c["priority"],
-            notes=notes,
-            approved_by=approved_by,
-            approved_at=approved_at,
-            created_by="admin",
-            created_at=ts,
-            updated_at=ts,
-        )
-        await db.cases.insert_one(doc.model_dump())
-    logger.info("Seeded initial case files.")
+    # Deliberately disabled. Case files must be created through the
+    # authenticated application and must never be auto-seeded.
+    return
+
 
 
 @app.on_event("startup")
