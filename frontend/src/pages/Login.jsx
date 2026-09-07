@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-
 import {
   Lock,
   User,
@@ -9,39 +8,105 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
-function playSuccessSound() {
+function playSuccessSound(audioContext) {
   try {
-    const AudioContext =
-      window.AudioContext || window.webkitAudioContext;
+    if (!audioContext) return;
 
-    if (!AudioContext) {
-      return;
-    }
-
-    const audioContext = new AudioContext();
     const now = audioContext.currentTime;
 
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
+    const master = audioContext.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+    master.connect(audioContext.destination);
 
-    oscillator.type = "sine";
+    // Initial system click
+    const click = audioContext.createOscillator();
+    const clickGain = audioContext.createGain();
 
-    oscillator.frequency.setValueAtTime(740, now);
-    oscillator.frequency.setValueAtTime(988, now + 0.09);
+    click.type = "square";
+    click.frequency.setValueAtTime(900, now);
 
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.075, now + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    clickGain.gain.setValueAtTime(0.08, now);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
 
-    oscillator.connect(gain);
-    gain.connect(audioContext.destination);
+    click.connect(clickGain);
+    clickGain.connect(master);
 
-    oscillator.start(now);
-    oscillator.stop(now + 0.3);
+    click.start(now);
+    click.stop(now + 0.05);
 
-    oscillator.addEventListener("ended", () => {
+    // Rising electronic sweep
+    const sweep = audioContext.createOscillator();
+    const sweepGain = audioContext.createGain();
+
+    sweep.type = "sine";
+    sweep.frequency.setValueAtTime(420, now + 0.03);
+    sweep.frequency.exponentialRampToValueAtTime(880, now + 0.22);
+
+    sweepGain.gain.setValueAtTime(0.0001, now + 0.03);
+    sweepGain.gain.exponentialRampToValueAtTime(0.055, now + 0.08);
+    sweepGain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      now + 0.25
+    );
+
+    sweep.connect(sweepGain);
+    sweepGain.connect(master);
+
+    sweep.start(now + 0.03);
+    sweep.stop(now + 0.27);
+
+    // Main confirmation note
+    const confirm = audioContext.createOscillator();
+    const confirmGain = audioContext.createGain();
+
+    confirm.type = "sine";
+    confirm.frequency.setValueAtTime(784, now + 0.23);
+    confirm.frequency.setValueAtTime(1047, now + 0.36);
+
+    confirmGain.gain.setValueAtTime(0.0001, now + 0.23);
+    confirmGain.gain.exponentialRampToValueAtTime(
+      0.09,
+      now + 0.25
+    );
+    confirmGain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      now + 0.58
+    );
+
+    confirm.connect(confirmGain);
+    confirmGain.connect(master);
+
+    confirm.start(now + 0.23);
+    confirm.stop(now + 0.6);
+
+    // Low tactical confirmation
+    const bass = audioContext.createOscillator();
+    const bassGain = audioContext.createGain();
+
+    bass.type = "triangle";
+    bass.frequency.setValueAtTime(220, now + 0.24);
+
+    bassGain.gain.setValueAtTime(0.0001, now + 0.24);
+    bassGain.gain.exponentialRampToValueAtTime(
+      0.045,
+      now + 0.27
+    );
+    bassGain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      now + 0.55
+    );
+
+    bass.connect(bassGain);
+    bassGain.connect(master);
+
+    bass.start(now + 0.24);
+    bass.stop(now + 0.57);
+
+    setTimeout(() => {
       audioContext.close().catch(() => {});
-    });
+    }, 800);
   } catch (error) {
     console.warn("Unable to play confirmation sound:", error);
   }
@@ -54,7 +119,6 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
   const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
 
@@ -110,10 +174,35 @@ export default function Login() {
     setError("");
     setLoading(true);
 
+    // Create/resume the AudioContext immediately from the
+    // user's click so browser autoplay restrictions don't
+    // block the confirmation sound later.
+    let audioContext = null;
+
+    try {
+      const AudioContextClass =
+        window.AudioContext || window.webkitAudioContext;
+
+      if (AudioContextClass) {
+        audioContext = new AudioContextClass();
+
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
+        }
+      }
+    } catch (audioError) {
+      console.warn(
+        "Unable to initialise confirmation audio:",
+        audioError
+      );
+    }
+
     /*
-     * Keep the existing development credentials for the RP environment.
-     * The authentication context remains the primary authentication path.
+     * Keep the existing development credentials for the RP
+     * environment. The authentication context remains the
+     * primary authentication path.
      */
+
     if (
       (checkUser === "ADMIN" &&
         checkPass === "ADMINSCC2026!") ||
@@ -143,18 +232,25 @@ export default function Login() {
           );
         }
 
-        playSuccessSound();
+        playSuccessSound(audioContext);
 
-        window.location.href = "/cases";
+        setTimeout(() => {
+          window.location.href = "/cases";
+        }, 650);
+
         return;
       } catch (err) {
+        audioContext?.close().catch(() => {});
+
         setLoading(false);
+
         setError(
           err?.response?.data?.detail ||
             err?.response?.data?.message ||
             err?.message ||
             "Authentication failed. Access denied."
         );
+
         return;
       }
     }
@@ -166,10 +262,13 @@ export default function Login() {
         authContext?.signIn;
 
       if (typeof loginFunc !== "function") {
+        audioContext?.close().catch(() => {});
+
         setLoading(false);
         setError(
           "Authentication service layer error. Access method unavailable."
         );
+
         return;
       }
 
@@ -181,17 +280,24 @@ export default function Login() {
       setLoading(false);
 
       if (result && result.ok === false) {
+        audioContext?.close().catch(() => {});
+
         setError(
           result.error ||
             "Invalid credentials. Access denied."
         );
+
         return;
       }
 
-      playSuccessSound();
+      playSuccessSound(audioContext);
 
-      window.location.href = "/cases";
+      setTimeout(() => {
+        window.location.href = "/cases";
+      }, 650);
     } catch (err) {
+      audioContext?.close().catch(() => {});
+
       setLoading(false);
 
       setError(

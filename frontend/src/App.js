@@ -1,4 +1,4 @@
-import "@/App.css";
+import "./App.css";
 
 import {
   BrowserRouter,
@@ -8,12 +8,12 @@ import {
   useLocation,
 } from "react-router-dom";
 
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "./components/ui/sonner";
 
-import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 
-import Login from "@/pages/Login";
-import Dashboard from "@/pages/Dashboard";
+import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
 
 import { ShieldAlert } from "lucide-react";
 
