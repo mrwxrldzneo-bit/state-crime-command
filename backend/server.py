@@ -48,6 +48,74 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 PRIORITY_COLORS = {"routine": 0x41597E, "urgent": 0xD4B25A, "high-risk": 0xC0392B}
 DISCORD_PING_ROLE_IDS = ["1540123417372532736", "1523963881230307338"]
 
+async def notify_help_discord(case: dict, user: dict, request: dict):
+    """Send an SCC assistance request to the configured Discord webhook."""
+    if not DISCORD_WEBHOOK_URL:
+        logger.warning("Discord webhook is not configured; assistance request was not sent.")
+        return
+
+    priority = case.get("priority", "routine")
+    priority_label = {
+        "routine": "🟦 Routine",
+        "urgent": "🟨 Urgent",
+        "high-risk": "🟥 High-Risk",
+    }.get(priority, priority.title())
+
+    officer_id = (request.get("officer_id") or "").strip() or "Not provided"
+    username = (request.get("username") or user.get("username") or "").strip() or "Unknown"
+    message = (request.get("message") or "").strip()
+
+    forum = (case.get("discord_url") or "").strip()
+    file_line = (
+        f"📂 **[Open the full case file →]({forum})**"
+        if forum
+        else "📂 *No Discord case file link provided.*"
+    )
+
+    embed = {
+        "author": {"name": "NSWPF · State Crime Command"},
+        "title": f"🆘 Assistance Request — {case.get('case_id', 'Unknown Case')}",
+        "description": (
+            "An officer has requested assistance through the **SCC Case Tracker**.\n\n"
+            f"**Request:**\n{message[:1000]}\n\n"
+            f"{file_line}"
+        ),
+        "color": 0xD4B25A,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "footer": {"text": "State Crime Command · Assistance Requests"},
+        "fields": [
+            {"name": "Case", "value": case.get("name", "Untitled"), "inline": True},
+            {"name": "Priority", "value": priority_label, "inline": True},
+            {"name": "Division", "value": case.get("division", "—"), "inline": True},
+            {"name": "Lead Investigator", "value": case.get("lead_investigator", "—"), "inline": True},
+            {"name": "Account", "value": username, "inline": True},
+            {"name": "Officer ID", "value": officer_id, "inline": True},
+        ],
+    }
+
+    if forum:
+        embed["url"] = forum
+
+    payload = {
+        "content": "🆘 **SCC Assistance Request** — command attention required.",
+        "embeds": [embed],
+        "allowed_mentions": {"parse": ["roles"]},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=8) as hc:
+            response = await hc.post(DISCORD_WEBHOOK_URL, json=payload)
+
+            if response.is_success:
+                logger.info("Discord assistance notification sent successfully.")
+            else:
+                logger.warning(
+                    "Discord assistance webhook rejected request: HTTP %s — %s",
+                    response.status_code,
+                    response.text[:300],
+                )
+    except Exception as e:
+        logger.warning("Discord assistance webhook failed: %s", e)
 
 async def notify_discord(case: dict):
     """Fire-and-forget Discord ping when a new case is logged. Never raises into the request."""
@@ -174,6 +242,12 @@ class CaseUpdate(BaseModel):
     discord_url: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
+
+
+class HelpRequest(BaseModel):
+    message: str
+    officer_id: str = ""
+    username: str = ""
 
 
 class NoteCreate(BaseModel):
@@ -312,6 +386,50 @@ async def create_case(body: CaseCreate, background_tasks: BackgroundTasks, user:
     await db.cases.insert_one(case.model_dump())
     background_tasks.add_task(notify_discord, case.model_dump())
     return case
+
+@api_router.post("/cases/{case_uid}/help")
+async def request_case_help(
+    case_uid: str,
+    body: HelpRequest,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    case = await db.cases.find_one(
+        {"$or": [{"id": case_uid}, {"case_id": case_uid}]},
+        {"_id": 0},
+    )
+
+    if not case:
+        raise HTTPException(
+            status_code=404,
+            detail="Case file not found.",
+        )
+
+    message = body.message.strip()
+
+    if not message:
+        raise HTTPException(
+            status_code=400,
+            detail="Please describe what assistance is required.",
+        )
+
+    request_data = {
+        "message": message,
+        "officer_id": body.officer_id.strip(),
+        "username": body.username.strip(),
+    }
+
+    background_tasks.add_task(
+        notify_help_discord,
+        case,
+        user,
+        request_data,
+    )
+
+    return {
+        "message": "Assistance request sent."
+    }
+
 
 
 @api_router.put("/cases/{case_uid}", response_model=Case)
