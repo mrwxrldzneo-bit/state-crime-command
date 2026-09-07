@@ -36,14 +36,15 @@ export default function Login() {
     setError("");
     setLoading(true);
 
-    // NATIVE CLEARANCE OVERRIDES TO BYPASS BACKEND DOWNSTATE TRAPS
+    // FIXED CLEARANCE BYPASS METHOD RUNS NATIVELY WITHOUT BLOCKING
     if (
       (checkUser === "ADMIN" && checkPass === "ADMINSCC2026!") ||
       (checkUser === "DETECTIVE" && checkPass === "NSWPFSCC2026")
     ) {
       try {
         await login(username.trim(), password);
-        setLoading(false);
+        // Force state route sync to main room
+        window.location.reload();
         return;
       } catch (err) {
         setLoading(false);
@@ -70,8 +71,8 @@ export default function Login() {
       <div className="w-full max-w-md">
         {/* Emblem + wordmark */}
         <div className="mb-7 text-center">
-          <div className="flex items-center justify-center gap-3 mb-2 text-[#d4b25a]">
-            <ShieldCheck className="h-10 w-9" />
+          <div className="flex items-center justify-center gap-3 mb-3 text-[#d4b25a]">
+            <ShieldCheck className="h-14 w-12" />
           </div>
           <h1 className="font-display font-bold text-xl uppercase tracking-wider text-[#e7edf6] leading-none">
             State Crime Command
@@ -138,7 +139,7 @@ export default function Login() {
             className="w-full flex items-center justify-center gap-2 rounded-md bg-[#d4b25a] hover:bg-[#f0d67a] disabled:opacity-60 text-[#0a1524] font-bold uppercase tracking-[0.15em] text-sm py-3 transition-colors cursor-pointer border border-[#d4b25a]"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            {loading ? "Verifying clearance..." : "Access System"}
+            {loading ? "Requesting Clearance..." : "Access System"}
           </button>
 
           <p className="text-center text-[10px] text-[#556a86] leading-relaxed pt-1">
