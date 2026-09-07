@@ -47,14 +47,10 @@ function SydneyClock() {
         year: "numeric",
       };
 
-      setTimeStr(
-        now.toLocaleTimeString("en-AU", timeOptions)
-      );
+      setTimeStr(now.toLocaleTimeString("en-AU", timeOptions));
 
       setDateStr(
-        now
-          .toLocaleDateString("en-AU", dateOptions)
-          .toUpperCase()
+        now.toLocaleDateString("en-AU", dateOptions).toUpperCase()
       );
     };
 
@@ -84,20 +80,13 @@ function SydneyClock() {
   );
 }
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  accent,
-}) {
+function StatCard({ icon: Icon, label, value, accent }) {
   return (
     <div className="bg-[#071326]/60 border border-[#142c4d] rounded-sm p-4 flex items-center justify-between relative">
       <div className="absolute top-0 left-0 w-1.5 h-1.5 border-t border-l border-[#4f6785]" />
 
       <div className="flex items-center gap-3">
-        <div
-          className={`p-3 rounded border ${accent}`}
-        >
+        <div className={`p-3 rounded border ${accent}`}>
           <Icon className="h-5 w-5" />
         </div>
 
@@ -133,51 +122,27 @@ export default function Dashboard() {
   const [synopsis, setSynopsis] = useState("");
   const [formError, setFormError] = useState("");
 
+  /*
+   * Load ONLY cases that actually exist in the backend.
+   *
+   * IMPORTANT:
+   * There are NO fake/default cases here.
+   * If the backend has no cases, the dashboard stays empty.
+   */
   const fetchCases = useCallback(async () => {
     setLoading(true);
 
     try {
-      const res = await api.get("/cases");
+      const response = await api.get("/cases");
 
-      setCases(
-        Array.isArray(res.data)
-          ? res.data
-          : []
-      );
-    } catch (err) {
-      console.log(
-        "Database connection idle. Using local operational tracking files."
-      );
+      setCases(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error("Failed to load case files:", error);
 
-      setCases([
-        {
-          id: "SCC-2026-0891",
-          name: "OPERATION VIPER",
-          division: "Organised Crime Squad",
-          investigator: "Det. Sgt. J. Williams",
-          status: "opened",
-          updated: "2 mins ago",
-          priority: "High",
-        },
-        {
-          id: "SCC-2026-1042",
-          name: "STRIKE FORCE ALPHA",
-          division: "Cybercrime Squad",
-          investigator: "Det. Insp. C. Vance",
-          status: "pending",
-          updated: "Just now",
-          priority: "Critical",
-        },
-        {
-          id: "SCC-2026-0412",
-          name: "OPERATION TITAN",
-          division: "Homicide Squad",
-          investigator: "Det. R. Cooper",
-          status: "closed",
-          updated: "2 days ago",
-          priority: "Routine",
-        },
-      ]);
+      /*
+       * Do not create fake cases if the backend is unavailable.
+       */
+      setCases([]);
     } finally {
       setLoading(false);
     }
@@ -187,69 +152,119 @@ export default function Dashboard() {
     fetchCases();
   }, [fetchCases]);
 
-  const handleCreateCase = (event) => {
+  /*
+   * Create a case ONLY when the user submits
+   * the New Case File form.
+   */
+  const handleCreateCase = async (event) => {
     event.preventDefault();
 
-    if (
-      !caseName.trim() ||
-      !leadInvestigator.trim() ||
-      !division
-    ) {
-      setFormError(
-        "All core data tracking indices required."
-      );
+    setFormError("");
+
+    if (!caseName.trim()) {
+      setFormError("Case Name is required.");
       return;
     }
 
-    const newCase = {
-      id: `SCC-2026-${Math.floor(
-        1000 + Math.random() * 9000
-      )}`,
+    if (!leadInvestigator.trim()) {
+      setFormError("Lead Investigator is required.");
+      return;
+    }
+
+    if (!division) {
+      setFormError("Division Involved is required.");
+      return;
+    }
+
+    const casePayload = {
       name: caseName.trim().toUpperCase(),
+      lead_investigator: leadInvestigator.trim(),
       division,
-      investigator: leadInvestigator.trim(),
-      status: "pending",
-      updated: "Just now",
       priority,
       discord_link: discordLink.trim(),
       synopsis: synopsis.trim(),
+      status: "pending",
     };
 
-    setCases((currentCases) => [
-      newCase,
-      ...currentCases,
-    ]);
+    try {
+      /*
+       * The backend creates the real case.
+       */
+      const response = await api.post("/cases", casePayload);
 
-    setIsCreateOpen(false);
+      /*
+       * Add the actual backend-created case to the dashboard.
+       */
+      if (response?.data) {
+        setCases((currentCases) => [
+          response.data,
+          ...currentCases,
+        ]);
+      } else {
+        /*
+         * If the API does not return the created case,
+         * reload the real case list.
+         */
+        await fetchCases();
+      }
 
-    setCaseName("");
-    setLeadInvestigator("");
-    setDivision("");
-    setPriority("Routine");
-    setDiscordLink("");
-    setSynopsis("");
-    setFormError("");
+      setIsCreateOpen(false);
+
+      setCaseName("");
+      setLeadInvestigator("");
+      setDivision("");
+      setPriority("Routine");
+      setDiscordLink("");
+      setSynopsis("");
+      setFormError("");
+    } catch (error) {
+      console.error("Failed to create case:", error);
+
+      setFormError(
+        error?.response?.data?.detail ||
+          error?.response?.data?.message ||
+          "Unable to create case file. Please try again."
+      );
+    }
   };
 
   const filteredCases = cases.filter((caseData) => {
     const matchesFilter =
-      filter === "all" ||
-      caseData.status === filter;
+      filter === "all" || caseData.status === filter;
 
     const searchValue = search.toLowerCase();
 
+    const caseNameValue =
+      caseData.name ||
+      caseData.case_name ||
+      "";
+
+    const investigatorValue =
+      caseData.investigator ||
+      caseData.lead_investigator ||
+      "";
+
+    const divisionValue =
+      caseData.division ||
+      "";
+
+    const caseIdValue =
+      caseData.id ||
+      caseData.case_id ||
+      "";
+
     const matchesSearch =
-      caseData.name
-        ?.toLowerCase()
+      caseNameValue
+        .toLowerCase()
         .includes(searchValue) ||
-      caseData.id
-        ?.toLowerCase()
+      caseIdValue
+        .toLowerCase()
         .includes(searchValue) ||
-      caseData.investigator
-        ?.toLowerCase()
+      investigatorValue
+        .toLowerCase()
         .includes(searchValue) ||
-      caseData.division
-        ?.toLowerCase()
+      divisionValue
+        .toLowerCase()
         .includes(searchValue);
 
     return matchesFilter && matchesSearch;
@@ -281,19 +296,35 @@ export default function Dashboard() {
 
   const getPriorityStyle = (priorityValue) => {
     if (priorityValue === "Critical") {
-      return "text-[#f08080]";
+      return "bg-[#f08080]";
     }
 
     if (priorityValue === "High") {
-      return "text-[#f0b46d]";
+      return "bg-[#f0b46d]";
     }
 
     if (priorityValue === "Medium") {
-      return "text-[#f0d67a]";
+      return "bg-[#f0d67a]";
     }
 
-    return "text-[#8ba0bd]";
+    return "bg-[#8ba0bd]";
   };
+
+  const getCaseId = (caseData) =>
+    caseData.id || caseData.case_id || "N/A";
+
+  const getCaseName = (caseData) =>
+    caseData.name || caseData.case_name || "Untitled Case";
+
+  const getInvestigator = (caseData) =>
+    caseData.investigator ||
+    caseData.lead_investigator ||
+    "Unassigned";
+
+  const getUpdated = (caseData) =>
+    caseData.updated ||
+    caseData.updated_at ||
+    "—";
 
   return (
     <div
@@ -304,11 +335,11 @@ export default function Dashboard() {
         backgroundSize: "40px 40px",
       }}
     >
-      {/* Top Cyber Command Intelligence Banner Header */}
+      {/* Header */}
       <header className="w-full bg-[#051122]/90 border-b border-[#142c4d] px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 sticky top-0 z-40 backdrop-blur-md">
         <div className="flex items-center gap-4">
           <div className="p-2.5 bg-[#0a1b33] border border-[#1c3557] rounded-sm text-[#d4b25a]">
-            <Shield className="h-7 w-7 drop-shadow-[0_0_8px_rgba(212,178,90,0.3)]" />
+            <Shield className="h-7 w-7" />
           </div>
 
           <div>
@@ -347,7 +378,7 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto p-4 md:p-8 space-y-6 relative z-10">
-        {/* Metric Data Counters */}
+        {/* Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <StatCard
             icon={Clock3}
@@ -371,7 +402,7 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Active Filter Ledger Navigation Rail */}
+        {/* Search / Filters */}
         <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#4f6785]" />
@@ -379,11 +410,9 @@ export default function Dashboard() {
             <input
               type="text"
               value={search}
-              onChange={(event) =>
-                setSearch(event.target.value)
-              }
+              onChange={(event) => setSearch(event.target.value)}
               placeholder="Search cases, investigators, divisions..."
-              className="w-full bg-[#040b17] border border-[#142c4d] rounded pl-10 pr-3 py-2.5 text-xs font-mono text-[#e7edf6] placeholder:text-[#384c66] focus:outline-none focus:border-[#d4b25a]/60 uppercase tracking-wider"
+              className="w-full box-border bg-[#040b17] border border-[#142c4d] rounded pl-10 pr-3 py-2.5 text-xs font-mono text-[#e7edf6] placeholder:text-[#384c66] focus:outline-none focus:border-[#d4b25a]/60 uppercase tracking-wider"
             />
           </div>
 
@@ -393,9 +422,7 @@ export default function Dashboard() {
                 <button
                   key={filterOption.key}
                   type="button"
-                  onClick={() =>
-                    setFilter(filterOption.key)
-                  }
+                  onClick={() => setFilter(filterOption.key)}
                   className={`px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer ${
                     filter === filterOption.key
                       ? "bg-[#d4b25a] text-[#050f1d] font-bold"
@@ -421,7 +448,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Ledger Grid Data Table */}
+        {/* Case Table */}
         <div className="bg-[#071326]/60 border border-[#142c4d] rounded-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -480,18 +507,18 @@ export default function Dashboard() {
                       className="px-4 py-14 text-center text-[#8ba0bd]"
                     >
                       <div className="font-mono text-[10px] uppercase tracking-widest">
-                        No matching case files logged inside this active filter terminal branch.
+                        No case files logged inside this active filter terminal branch.
                       </div>
                     </td>
                   </tr>
                 ) : (
                   filteredCases.map((caseData) => (
                     <tr
-                      key={caseData.id}
+                      key={caseData.id || caseData.case_id}
                       className="border-b border-[#10233d] last:border-0 hover:bg-[#0b1b30] transition-colors"
                     >
                       <td className="px-4 py-3 font-mono text-xs text-[#d4b25a] whitespace-nowrap">
-                        {caseData.id}
+                        {getCaseId(caseData)}
                       </td>
 
                       <td className="px-4 py-3">
@@ -503,17 +530,17 @@ export default function Dashboard() {
                           />
 
                           <span className="font-semibold text-[#e7edf6]">
-                            {caseData.name}
+                            {getCaseName(caseData)}
                           </span>
                         </div>
                       </td>
 
                       <td className="px-4 py-3 text-[#a8b6c9] hidden md:table-cell whitespace-nowrap">
-                        {caseData.division}
+                        {caseData.division || "—"}
                       </td>
 
                       <td className="px-4 py-3 text-[#a8b6c9] hidden lg:table-cell whitespace-nowrap">
-                        {caseData.investigator}
+                        {getInvestigator(caseData)}
                       </td>
 
                       <td className="px-4 py-3">
@@ -522,12 +549,12 @@ export default function Dashboard() {
                             caseData.status
                           )}`}
                         >
-                          {caseData.status}
+                          {caseData.status || "pending"}
                         </span>
                       </td>
 
                       <td className="px-4 py-3 text-[#8ba0bd] text-xs hidden xl:table-cell whitespace-nowrap">
-                        {caseData.updated}
+                        {getUpdated(caseData)}
                       </td>
 
                       <td className="px-4 py-3">
@@ -566,9 +593,9 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* New Case File Log Modal */}
+      {/* New Case File Modal */}
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#000000]/75 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
           <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-[#071326] border border-[#1c3557] rounded-sm shadow-2xl">
             {/* Modal Header */}
             <div className="sticky top-0 z-10 bg-[#08172a] border-b border-[#142c4d] px-5 py-4 flex items-center justify-between">
@@ -596,7 +623,6 @@ export default function Dashboard() {
 
             <form onSubmit={handleCreateCase}>
               <div className="p-5 space-y-5">
-                {/* Form Error */}
                 {formError && (
                   <div className="flex items-start gap-3 bg-[#2a1414] border border-[#6b2929] rounded-sm p-3">
                     <AlertTriangle className="h-4 w-4 text-[#f08080] mt-0.5 shrink-0" />
@@ -724,7 +750,7 @@ export default function Dashboard() {
                   />
 
                   <p className="mt-1.5 text-[9px] font-mono text-[#4f6785]">
-                    Link to the case thread in the Discord forum. Shown as "View Case File Here".
+                    Link to the case thread in the Discord forum.
                   </p>
                 </div>
 
@@ -747,7 +773,9 @@ export default function Dashboard() {
 
                 <div className="border border-[#142c4d] bg-[#040b17]/60 rounded-sm p-3">
                   <p className="text-[9px] font-mono uppercase tracking-wider leading-relaxed text-[#5f7592]">
-                    New case files are logged as Pending Review and become active once approved by an administrator profile handshake.
+                    New case files are logged as Pending Review and become
+                    active once approved by an administrator profile
+                    handshake.
                   </p>
                 </div>
               </div>
