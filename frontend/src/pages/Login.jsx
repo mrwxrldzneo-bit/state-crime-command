@@ -20,7 +20,6 @@ function playSuccessSound(audioContext) {
     master.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
     master.connect(audioContext.destination);
 
-    // Initial system click
     const click = audioContext.createOscillator();
     const clickGain = audioContext.createGain();
 
@@ -36,7 +35,6 @@ function playSuccessSound(audioContext) {
     click.start(now);
     click.stop(now + 0.05);
 
-    // Rising electronic sweep
     const sweep = audioContext.createOscillator();
     const sweepGain = audioContext.createGain();
 
@@ -46,10 +44,7 @@ function playSuccessSound(audioContext) {
 
     sweepGain.gain.setValueAtTime(0.0001, now + 0.03);
     sweepGain.gain.exponentialRampToValueAtTime(0.055, now + 0.08);
-    sweepGain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      now + 0.25
-    );
+    sweepGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
 
     sweep.connect(sweepGain);
     sweepGain.connect(master);
@@ -57,7 +52,6 @@ function playSuccessSound(audioContext) {
     sweep.start(now + 0.03);
     sweep.stop(now + 0.27);
 
-    // Main confirmation note
     const confirm = audioContext.createOscillator();
     const confirmGain = audioContext.createGain();
 
@@ -66,14 +60,8 @@ function playSuccessSound(audioContext) {
     confirm.frequency.setValueAtTime(1047, now + 0.36);
 
     confirmGain.gain.setValueAtTime(0.0001, now + 0.23);
-    confirmGain.gain.exponentialRampToValueAtTime(
-      0.09,
-      now + 0.25
-    );
-    confirmGain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      now + 0.58
-    );
+    confirmGain.gain.exponentialRampToValueAtTime(0.09, now + 0.25);
+    confirmGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.58);
 
     confirm.connect(confirmGain);
     confirmGain.connect(master);
@@ -81,7 +69,6 @@ function playSuccessSound(audioContext) {
     confirm.start(now + 0.23);
     confirm.stop(now + 0.6);
 
-    // Low tactical confirmation
     const bass = audioContext.createOscillator();
     const bassGain = audioContext.createGain();
 
@@ -89,14 +76,8 @@ function playSuccessSound(audioContext) {
     bass.frequency.setValueAtTime(220, now + 0.24);
 
     bassGain.gain.setValueAtTime(0.0001, now + 0.24);
-    bassGain.gain.exponentialRampToValueAtTime(
-      0.045,
-      now + 0.27
-    );
-    bassGain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      now + 0.55
-    );
+    bassGain.gain.exponentialRampToValueAtTime(0.045, now + 0.27);
+    bassGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
 
     bass.connect(bassGain);
     bassGain.connect(master);
@@ -163,10 +144,7 @@ export default function Login() {
   const submit = async (event) => {
     event.preventDefault();
 
-    const checkUser = username.trim().toUpperCase();
-    const checkPass = password.trim();
-
-    if (!username || !password) {
+    if (!username.trim() || !password) {
       setError("All tactical entry credentials required.");
       return;
     }
@@ -174,9 +152,6 @@ export default function Login() {
     setError("");
     setLoading(true);
 
-    // Create/resume the AudioContext immediately from the
-    // user's click so browser autoplay restrictions don't
-    // block the confirmation sound later.
     let audioContext = null;
 
     try {
@@ -197,94 +172,18 @@ export default function Login() {
       );
     }
 
-    /*
-     * Keep the existing development credentials for the RP
-     * environment. The authentication context remains the
-     * primary authentication path.
-     */
-
-    if (
-      (checkUser === "ADMIN" &&
-        checkPass === "ADMINSCC2026!") ||
-      (checkUser === "DETECTIVE" &&
-        checkPass === "NSWPFSCC2026")
-    ) {
-      try {
-        const loginFunc =
-          authContext?.login ||
-          authContext?.loginUser ||
-          authContext?.signIn;
-
-        if (typeof loginFunc === "function") {
-          await loginFunc(username.trim(), password);
-        } else {
-          localStorage.setItem(
-            "scc_token",
-            "clearance_approved_bypass_token"
-          );
-
-          localStorage.setItem(
-            "user",
-            JSON.stringify({
-              username: checkUser,
-              role: checkUser,
-            })
-          );
-        }
-
-        playSuccessSound(audioContext);
-
-        setTimeout(() => {
-          window.location.href = "/cases";
-        }, 650);
-
-        return;
-      } catch (err) {
-        audioContext?.close().catch(() => {});
-
-        setLoading(false);
-
-        setError(
-          err?.response?.data?.detail ||
-            err?.response?.data?.message ||
-            err?.message ||
-            "Authentication failed. Access denied."
-        );
-
-        return;
-      }
-    }
-
     try {
-      const loginFunc =
-        authContext?.login ||
-        authContext?.loginUser ||
-        authContext?.signIn;
-
-      if (typeof loginFunc !== "function") {
-        audioContext?.close().catch(() => {});
-
-        setLoading(false);
-        setError(
-          "Authentication service layer error. Access method unavailable."
-        );
-
-        return;
-      }
-
-      const result = await loginFunc(
+      const result = await authContext.login(
         username.trim(),
         password
       );
 
-      setLoading(false);
-
       if (result && result.ok === false) {
         audioContext?.close().catch(() => {});
 
+        setLoading(false);
         setError(
-          result.error ||
-            "Invalid credentials. Access denied."
+          result.error || "Invalid credentials. Access denied."
         );
 
         return;
@@ -303,9 +202,8 @@ export default function Login() {
       setError(
         err?.response?.data?.detail ||
           err?.response?.data?.message ||
-          `Database Error: ${
-            err?.message || "Authentication request failed."
-          }`
+          err?.message ||
+          "Authentication failed. Access denied."
       );
     }
   };

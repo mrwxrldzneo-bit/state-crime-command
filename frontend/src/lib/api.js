@@ -1,7 +1,7 @@
 import axios from "axios";
 
 // Explicitly route data traffic straight through your stable live Render backend engine URL
-const API_BASE_URL = "https://onrender.com/api";
+const API_BASE_URL = "https://state-crime-command-backend.onrender.com/api";
 
 const api = axios.create({
   baseURL: API_BASE_URL,

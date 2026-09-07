@@ -29,6 +29,18 @@ const FILTERS = [
   { key: "closed", label: "Closed" },
 ];
 
+const DIVISIONS = [
+  "Organised Crime Squad",
+  "Strike Force Raptor",
+  "Both",
+];
+
+const PRIORITIES = [
+  "routine",
+  "urgent",
+  "high-risk",
+];
+
 function playSuccessSound() {
   try {
     const AudioContext =
@@ -45,13 +57,18 @@ function playSuccessSound() {
     const gain = audioContext.createGain();
 
     oscillator.type = "sine";
-
     oscillator.frequency.setValueAtTime(740, now);
     oscillator.frequency.setValueAtTime(988, now + 0.09);
 
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.075, now + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    gain.gain.linearRampToValueAtTime(
+      0.075,
+      now + 0.015
+    );
+    gain.gain.exponentialRampToValueAtTime(
+      0.001,
+      now + 0.28
+    );
 
     oscillator.connect(gain);
     gain.connect(audioContext.destination);
@@ -63,7 +80,10 @@ function playSuccessSound() {
       audioContext.close().catch(() => {});
     });
   } catch (error) {
-    console.warn("Unable to play confirmation sound:", error);
+    console.warn(
+      "Unable to play confirmation sound:",
+      error
+    );
   }
 }
 
@@ -92,19 +112,28 @@ function SydneyClock() {
       };
 
       setTimeStr(
-        now.toLocaleTimeString("en-AU", timeOptions)
+        now.toLocaleTimeString(
+          "en-AU",
+          timeOptions
+        )
       );
 
       setDateStr(
         now
-          .toLocaleDateString("en-AU", dateOptions)
+          .toLocaleDateString(
+            "en-AU",
+            dateOptions
+          )
           .toUpperCase()
       );
     };
 
     updateClock();
 
-    const interval = setInterval(updateClock, 1000);
+    const interval = setInterval(
+      updateClock,
+      1000
+    );
 
     return () => clearInterval(interval);
   }, []);
@@ -118,7 +147,9 @@ function SydneyClock() {
           AEST
         </span>
 
-        <span className="text-[#1c3557]">•</span>
+        <span className="text-[#1c3557]">
+          •
+        </span>
 
         <span className="text-[10px] text-[#8ba0bd] font-normal">
           {dateStr}
@@ -167,40 +198,58 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreateOpen, setIsCreateOpen] =
+    useState(false);
 
   const [caseName, setCaseName] = useState("");
   const [leadInvestigator, setLeadInvestigator] =
     useState("");
-  const [division, setDivision] = useState("");
-  const [priority, setPriority] = useState("Routine");
-  const [discordLink, setDiscordLink] = useState("");
-  const [synopsis, setSynopsis] = useState("");
-  const [formError, setFormError] = useState("");
-  const [creatingCase, setCreatingCase] = useState(false);
 
-  const fetchCases = useCallback(async () => {
-    setLoading(true);
+  const [division, setDivision] =
+    useState("");
 
-    try {
-      const response = await api.get("/cases");
+  const [priority, setPriority] =
+    useState("routine");
 
-      setCases(
-        Array.isArray(response.data)
-          ? response.data
-          : []
-      );
-    } catch (error) {
-      console.error(
-        "Failed to load case files:",
-        error
-      );
+  const [discordLink, setDiscordLink] =
+    useState("");
 
-      setCases([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [synopsis, setSynopsis] =
+    useState("");
+
+  const [formError, setFormError] =
+    useState("");
+
+  const [creatingCase, setCreatingCase] =
+    useState(false);
+
+  const fetchCases = useCallback(
+    async () => {
+      setLoading(true);
+
+      try {
+        const response = await api.get(
+          "/cases"
+        );
+
+        setCases(
+          Array.isArray(response.data)
+            ? response.data
+            : []
+        );
+      } catch (error) {
+        console.error(
+          "Failed to load case files:",
+          error
+        );
+
+        setCases([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     fetchCases();
@@ -208,11 +257,12 @@ export default function Dashboard() {
 
   const handleCreateCase = async (event) => {
     event.preventDefault();
-
     setFormError("");
 
     if (!caseName.trim()) {
-      setFormError("Case Name is required.");
+      setFormError(
+        "Case Name is required."
+      );
       return;
     }
 
@@ -232,10 +282,11 @@ export default function Dashboard() {
 
     const casePayload = {
       name: caseName.trim().toUpperCase(),
-      lead_investigator: leadInvestigator.trim(),
+      lead_investigator:
+        leadInvestigator.trim(),
       division,
       priority,
-      discord_link: discordLink.trim(),
+      discord_url: discordLink.trim(),
       synopsis: synopsis.trim(),
       status: "pending",
     };
@@ -263,7 +314,7 @@ export default function Dashboard() {
       setCaseName("");
       setLeadInvestigator("");
       setDivision("");
-      setPriority("Routine");
+      setPriority("routine");
       setDiscordLink("");
       setSynopsis("");
       setFormError("");
@@ -318,12 +369,22 @@ export default function Dashboard() {
       ).toLowerCase();
 
       const matchesSearch =
-        caseNameValue.includes(searchValue) ||
-        caseIdValue.includes(searchValue) ||
-        investigatorValue.includes(searchValue) ||
-        divisionValue.includes(searchValue);
+        caseNameValue.includes(
+          searchValue
+        ) ||
+        caseIdValue.includes(
+          searchValue
+        ) ||
+        investigatorValue.includes(
+          searchValue
+        ) ||
+        divisionValue.includes(
+          searchValue
+        );
 
-      return matchesFilter && matchesSearch;
+      return (
+        matchesFilter && matchesSearch
+      );
     }
   );
 
@@ -354,21 +415,19 @@ export default function Dashboard() {
     return "bg-[#3a2f12] border-[#665522] text-[#f0d67a]";
   };
 
-  const getPriorityStyle = (priorityValue) => {
-    const normalized =
-      String(priorityValue || "")
-        .toLowerCase();
+  const getPriorityStyle = (
+    priorityValue
+  ) => {
+    const normalized = String(
+      priorityValue || ""
+    ).toLowerCase();
 
-    if (normalized === "critical") {
+    if (normalized === "high-risk") {
       return "bg-[#f08080]";
     }
 
-    if (normalized === "high") {
+    if (normalized === "urgent") {
       return "bg-[#f0b46d]";
-    }
-
-    if (normalized === "medium") {
-      return "bg-[#f0d67a]";
     }
 
     return "bg-[#8ba0bd]";
@@ -499,22 +558,27 @@ export default function Dashboard() {
 
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex rounded-md border border-[#142c4d] overflow-hidden bg-[#071326]/50">
-              {FILTERS.map((filterOption) => (
-                <button
-                  key={filterOption.key}
-                  type="button"
-                  onClick={() =>
-                    setFilter(filterOption.key)
-                  }
-                  className={`px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer ${
-                    filter === filterOption.key
-                      ? "bg-[#d4b25a] text-[#050f1d] font-bold"
-                      : "text-[#8ba0bd] hover:text-[#e7edf6] hover:bg-[#142c4d]/50"
-                  }`}
-                >
-                  {filterOption.label}
-                </button>
-              ))}
+              {FILTERS.map(
+                (filterOption) => (
+                  <button
+                    key={filterOption.key}
+                    type="button"
+                    onClick={() =>
+                      setFilter(
+                        filterOption.key
+                      )
+                    }
+                    className={`px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-all cursor-pointer ${
+                      filter ===
+                      filterOption.key
+                        ? "bg-[#d4b25a] text-[#050f1d] font-bold"
+                        : "text-[#8ba0bd] hover:text-[#e7edf6] hover:bg-[#142c4d]/50"
+                    }`}
+                  >
+                    {filterOption.label}
+                  </button>
+                )
+              )}
             </div>
 
             <button
@@ -579,7 +643,8 @@ export default function Dashboard() {
                       </div>
                     </td>
                   </tr>
-                ) : filteredCases.length === 0 ? (
+                ) : filteredCases.length ===
+                  0 ? (
                   <tr>
                     <td
                       colSpan={7}
@@ -591,83 +656,95 @@ export default function Dashboard() {
                     </td>
                   </tr>
                 ) : (
-                  filteredCases.map((caseData) => (
-                    <tr
-                      key={
-                        caseData.id ||
-                        caseData.case_id
-                      }
-                      className="border-b border-[#10233d] last:border-0 hover:bg-[#0b1b30] transition-colors"
-                    >
-                      <td className="px-4 py-3 font-mono text-xs text-[#d4b25a] whitespace-nowrap">
-                        {getCaseId(caseData)}
-                      </td>
+                  filteredCases.map(
+                    (caseData) => (
+                      <tr
+                        key={
+                          caseData.id ||
+                          caseData.case_id
+                        }
+                        className="border-b border-[#10233d] last:border-0 hover:bg-[#0b1b30] transition-colors"
+                      >
+                        <td className="px-4 py-3 font-mono text-xs text-[#d4b25a] whitespace-nowrap">
+                          {getCaseId(
+                            caseData
+                          )}
+                        </td>
 
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${getPriorityStyle(
+                                caseData.priority
+                              )}`}
+                            />
+
+                            <span className="font-semibold text-[#e7edf6]">
+                              {getCaseName(
+                                caseData
+                              )}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-3 text-[#a8b6c9] hidden md:table-cell whitespace-nowrap">
+                          {caseData.division ||
+                            "—"}
+                        </td>
+
+                        <td className="px-4 py-3 text-[#a8b6c9] hidden lg:table-cell whitespace-nowrap">
+                          {getInvestigator(
+                            caseData
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3">
                           <span
-                            className={`h-1.5 w-1.5 rounded-full ${getPriorityStyle(
-                              caseData.priority
+                            className={`inline-flex items-center px-2 py-1 rounded-sm border text-[9px] font-mono uppercase tracking-widest ${getStatusStyle(
+                              caseData.status
                             )}`}
-                          />
-
-                          <span className="font-semibold text-[#e7edf6]">
-                            {getCaseName(caseData)}
+                          >
+                            {caseData.status ||
+                              "pending"}
                           </span>
-                        </div>
-                      </td>
+                        </td>
 
-                      <td className="px-4 py-3 text-[#a8b6c9] hidden md:table-cell whitespace-nowrap">
-                        {caseData.division || "—"}
-                      </td>
+                        <td className="px-4 py-3 text-[#8ba0bd] text-xs hidden xl:table-cell whitespace-nowrap">
+                          {getUpdated(
+                            caseData
+                          )}
+                        </td>
 
-                      <td className="px-4 py-3 text-[#a8b6c9] hidden lg:table-cell whitespace-nowrap">
-                        {getInvestigator(caseData)}
-                      </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              title="View"
+                              className="p-2 text-[#8ba0bd] hover:text-[#e7edf6] hover:bg-[#142c4d] rounded transition-colors"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
 
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center px-2 py-1 rounded-sm border text-[9px] font-mono uppercase tracking-widest ${getStatusStyle(
-                            caseData.status
-                          )}`}
-                        >
-                          {caseData.status || "pending"}
-                        </span>
-                      </td>
+                            <button
+                              type="button"
+                              title="Edit"
+                              className="p-2 text-[#8ba0bd] hover:text-[#e7edf6] hover:bg-[#142c4d] rounded transition-colors"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
 
-                      <td className="px-4 py-3 text-[#8ba0bd] text-xs hidden xl:table-cell whitespace-nowrap">
-                        {getUpdated(caseData)}
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            type="button"
-                            title="View"
-                            className="p-2 text-[#8ba0bd] hover:text-[#e7edf6] hover:bg-[#142c4d] rounded transition-colors"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                          </button>
-
-                          <button
-                            type="button"
-                            title="Edit"
-                            className="p-2 text-[#8ba0bd] hover:text-[#e7edf6] hover:bg-[#142c4d] rounded transition-colors"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-
-                          <button
-                            type="button"
-                            title="Delete"
-                            className="p-2 text-[#8ba0bd] hover:text-[#f08080] hover:bg-[#2a1414] rounded transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                            <button
+                              type="button"
+                              title="Delete"
+                              className="p-2 text-[#8ba0bd] hover:text-[#f08080] hover:bg-[#2a1414] rounded transition-colors"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  )
                 )}
               </tbody>
             </table>
@@ -691,7 +768,9 @@ export default function Dashboard() {
 
               <button
                 type="button"
-                onClick={closeCreateDialog}
+                onClick={
+                  closeCreateDialog
+                }
                 disabled={creatingCase}
                 className="p-2 text-[#4f6785] hover:text-[#e7edf6] hover:bg-[#142c4d] rounded transition-colors disabled:opacity-50"
               >
@@ -699,7 +778,9 @@ export default function Dashboard() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateCase}>
+            <form
+              onSubmit={handleCreateCase}
+            >
               <div className="p-5 space-y-5">
                 {formError && (
                   <div className="flex items-start gap-3 bg-[#2a1414] border border-[#6b2929] rounded-sm p-3">
@@ -737,7 +818,9 @@ export default function Dashboard() {
 
                   <input
                     type="text"
-                    value={leadInvestigator}
+                    value={
+                      leadInvestigator
+                    }
                     onChange={(event) =>
                       setLeadInvestigator(
                         event.target.value
@@ -768,21 +851,18 @@ export default function Dashboard() {
                       Select division
                     </option>
 
-                    <option value="Organised Crime Squad">
-                      Organised Crime Squad
-                    </option>
-
-                    <option value="Cybercrime Squad">
-                      Cybercrime Squad
-                    </option>
-
-                    <option value="Homicide Squad">
-                      Homicide Squad
-                    </option>
-
-                    <option value="Counter Terrorism Command">
-                      Counter Terrorism Command
-                    </option>
+                    {DIVISIONS.map(
+                      (divisionOption) => (
+                        <option
+                          key={divisionOption}
+                          value={
+                            divisionOption
+                          }
+                        >
+                          {divisionOption}
+                        </option>
+                      )
+                    )}
                   </select>
                 </div>
 
@@ -801,21 +881,18 @@ export default function Dashboard() {
                     disabled={creatingCase}
                     className="w-full box-border rounded-sm bg-[#040b17] border border-[#142c4d] px-3 py-2.5 text-xs text-[#e7edf6] focus:outline-none focus:border-[#d4b25a]/60 focus:ring-1 focus:ring-[#d4b25a]/20 tracking-wider cursor-pointer disabled:opacity-50"
                   >
-                    <option value="Routine">
-                      Routine
-                    </option>
-
-                    <option value="Medium">
-                      Medium
-                    </option>
-
-                    <option value="High">
-                      High
-                    </option>
-
-                    <option value="Critical">
-                      Critical
-                    </option>
+                    {PRIORITIES.map(
+                      (priorityOption) => (
+                        <option
+                          key={priorityOption}
+                          value={
+                            priorityOption
+                          }
+                        >
+                          {priorityOption}
+                        </option>
+                      )
+                    )}
                   </select>
                 </div>
 
@@ -873,7 +950,9 @@ export default function Dashboard() {
               <div className="border-t border-[#142c4d] bg-[#051122]/70 px-5 py-4 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={closeCreateDialog}
+                  onClick={
+                    closeCreateDialog
+                  }
                   disabled={creatingCase}
                   className="px-4 py-2 border border-[#142c4d] hover:bg-[#142c4d]/40 text-[#8ba0bd] hover:text-[#e7edf6] rounded-sm transition-all text-xs font-bold uppercase tracking-wider cursor-pointer disabled:opacity-50"
                 >
