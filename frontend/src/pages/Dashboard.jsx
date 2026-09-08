@@ -18,7 +18,6 @@ import {
   MessageCircle,
   Activity,
   User,
-  CalendarDays,
   ExternalLink,
   Save,
 } from "lucide-react";
@@ -28,6 +27,7 @@ const FILTERS = [
   { key: "pending", label: "Pending" },
   { key: "opened", label: "Opened" },
   { key: "closed", label: "Closed" },
+  { key: "denied", label: "Denied" },
 ];
 
 const DIVISIONS = [
@@ -567,7 +567,6 @@ export default function Dashboard() {
       setSavingCase(false);
     }
   };
-
   const handleApprove = async (caseData) => {
     if (!isAdmin) {
       return;
@@ -576,6 +575,7 @@ export default function Dashboard() {
     const caseKey = getCaseKey(caseData);
 
     if (!caseKey) {
+      setActionError("Unable to determine the case identifier.");
       return;
     }
 
@@ -602,6 +602,13 @@ export default function Dashboard() {
               : item
           )
         );
+
+        setSelectedCase((currentSelectedCase) =>
+          currentSelectedCase &&
+          getCaseKey(currentSelectedCase) === caseKey
+            ? response.data
+            : currentSelectedCase
+        );
       } else {
         await fetchCases();
       }
@@ -620,6 +627,67 @@ export default function Dashboard() {
         formatApiError(detail) ||
           error?.response?.data?.message ||
           "Unable to approve this case."
+      );
+    }
+  };
+
+  const handleDeny = async (caseData) => {
+    if (!isAdmin) {
+      return;
+    }
+
+    const caseKey = getCaseKey(caseData);
+
+    if (!caseKey) {
+      setActionError(
+        "Unable to determine the case identifier."
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Deny case ${getCaseId(caseData)}?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setActionError("");
+
+    try {
+      const response = await api.post(
+        `/cases/${caseKey}/deny`
+      );
+
+      if (response?.data) {
+        setCases((currentCases) =>
+          currentCases.map((item) =>
+            getCaseKey(item) === caseKey
+              ? response.data
+              : item
+          )
+        );
+
+        setSelectedCase((currentSelectedCase) =>
+          currentSelectedCase &&
+          getCaseKey(currentSelectedCase) === caseKey
+            ? response.data
+            : currentSelectedCase
+        );
+      } else {
+        await fetchCases();
+      }
+
+      playSuccessSound();
+    } catch (error) {
+      const detail =
+        error?.response?.data?.detail;
+
+      setActionError(
+        formatApiError(detail) ||
+          error?.response?.data?.message ||
+          "Unable to deny this case."
       );
     }
   };
@@ -837,6 +905,13 @@ export default function Dashboard() {
       ).toLowerCase() === "closed"
   ).length;
 
+  const deniedCount = cases.filter(
+    (caseData) =>
+      String(
+        caseData?.status || ""
+      ).toLowerCase() === "denied"
+  ).length;
+
   const getStatusStyle = (status) => {
     const normalized = String(
       status || "pending"
@@ -848,6 +923,10 @@ export default function Dashboard() {
 
     if (normalized === "closed") {
       return "bg-[#172238] border-[#2b4265] text-[#a8b6c9]";
+    }
+
+    if (normalized === "denied") {
+      return "bg-[#2a1414] border-[#6b2929] text-[#f08080]";
     }
 
     return "bg-[#3a2f12] border-[#665522] text-[#f0d67a]";
@@ -940,7 +1019,7 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto p-4 md:p-8 space-y-6 relative z-10">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           <StatCard
             icon={Clock3}
             label="Pending Review"
@@ -960,6 +1039,13 @@ export default function Dashboard() {
             label="Closed Cases"
             value={closedCount}
             accent="bg-[#172238] border-[#2b4265] text-[#a8b6c9]"
+          />
+
+          <StatCard
+            icon={X}
+            label="Denied Cases"
+            value={deniedCount}
+            accent="bg-[#2a1414] border-[#6b2929] text-[#f08080]"
           />
         </div>
 
@@ -1166,16 +1252,29 @@ export default function Dashboard() {
 
                             {isAdmin &&
                               status === "pending" && (
-                                <button
-                                  type="button"
-                                  title="Approve"
-                                  onClick={() =>
-                                    handleApprove(caseData)
-                                  }
-                                  className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider text-[#79e0a4] hover:text-[#b5f2cc] hover:bg-[#0f2e1e] border border-[#245d3d] rounded transition-colors"
-                                >
-                                  Approve
-                                </button>
+                                <>
+                                  <button
+                                    type="button"
+                                    title="Approve"
+                                    onClick={() =>
+                                      handleApprove(caseData)
+                                    }
+                                    className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider text-[#79e0a4] hover:text-[#b5f2cc] hover:bg-[#0f2e1e] border border-[#245d3d] rounded transition-colors"
+                                  >
+                                    Approve
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    title="Deny"
+                                    onClick={() =>
+                                      handleDeny(caseData)
+                                    }
+                                    className="px-2.5 py-1.5 text-[9px] font-mono uppercase tracking-wider text-[#f08080] hover:text-[#f4a6a6] hover:bg-[#2a1414] border border-[#6b2929] rounded transition-colors"
+                                  >
+                                    Deny
+                                  </button>
+                                </>
                               )}
 
                             {isAdmin && (
@@ -1626,6 +1725,23 @@ export default function Dashboard() {
                             )}
                           </span>
                         </p>
+
+                        <p className="text-[#8ba0bd]">
+                          Denied by:{" "}
+                          <span className="text-[#e7edf6]">
+                            {selectedCase?.denied_by ||
+                              "Not denied"}
+                          </span>
+                        </p>
+
+                        <p className="text-[#8ba0bd]">
+                          Denied:{" "}
+                          <span className="text-[#e7edf6]">
+                            {formatDate(
+                              selectedCase?.denied_at
+                            )}
+                          </span>
+                        </p>
                       </div>
                     </div>
                   )}
@@ -1670,6 +1786,22 @@ export default function Dashboard() {
                     >
                       <CheckCircle2 className="h-4 w-4" />
                       Approve
+                    </button>
+                  )}
+
+                {isAdmin &&
+                  String(
+                    selectedCase?.status || ""
+                  ).toLowerCase() === "pending" && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleDeny(selectedCase)
+                      }
+                      className="flex items-center gap-2 px-4 py-2 bg-[#2a1414] border border-[#6b2929] text-[#f08080] hover:bg-[#391919] rounded-sm text-xs font-bold uppercase tracking-wider"
+                    >
+                      <X className="h-4 w-4" />
+                      Deny
                     </button>
                   )}
 
