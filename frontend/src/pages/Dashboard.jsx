@@ -689,6 +689,8 @@ export default function Dashboard() {
   const [chatDiscordUrl, setChatDiscordUrl] = useState("");
   const [chatSessionActive, setChatSessionActive] = useState(false);
   const [endingSupport, setEndingSupport] = useState(false);
+  const [supportEndingAt, setSupportEndingAt] = useState("");
+  const [supportEndCountdown, setSupportEndCountdown] = useState(null);
 
   const seenDiscordMessageIdsRef = useRef(new Set());
   const supportConnectPromiseRef = useRef(null);
@@ -920,7 +922,7 @@ export default function Dashboard() {
       } else {
         setChatError(
           response?.data?.discord_error ||
-            "Discord forum could not be created."
+            "Discord support thread could not be created."
         );
       }
 
@@ -1410,6 +1412,11 @@ export default function Dashboard() {
       sessionPayload?.help_session_active !== false &&
       sessionPayload?.active !== false
     );
+    setSupportEndingAt(sessionPayload?.help_ending_at || "");
+    setEndingSupport(
+      sessionPayload?.help_discord_status === "ending" ||
+      Boolean(sessionPayload?.help_ending_at)
+    );
   }, []);
 
   const restoreExistingSupportSession = useCallback(
@@ -1511,6 +1518,7 @@ export default function Dashboard() {
 
     try {
       setEndingSupport(true);
+
       const response = await sccRemoteRequest(
         "POST",
         `/cases/${caseKey}/help/clear`,
@@ -1518,52 +1526,114 @@ export default function Dashboard() {
         30000
       );
 
-      const updatedCase = response?.data?.case;
-      if (updatedCase) {
-        updateCases((currentCases) =>
-          currentCases.map((item) =>
-            item.id === chatCase.id ||
-            item.case_id === chatCase.case_id
-              ? {
-                  ...item,
-                  ...updatedCase,
-                  backend_id:
-                    updatedCase.id ||
-                    item.backend_id,
-                  help_session_active: false,
-                }
-              : item
-          )
-        );
-      } else {
-        updateCases((currentCases) =>
-          currentCases.map((item) =>
-            item.id === chatCase.id ||
-            item.case_id === chatCase.case_id
-              ? { ...item, help_session_active: false }
-              : item
-          )
-        );
-      }
+      const endingAt =
+        response?.data?.ending_at ||
+        response?.data?.case?.help_ending_at ||
+        "";
 
-      setChatSessionActive(false);
-      setIsChatOpen(false);
-      setChatCase(null);
-      setChatMessages([]);
-      setChatInput("");
-      setChatError("");
-      setHelpSent(false);
-      setChatDiscordUrl("");
-      playSuccessSound();
+      setSupportEndingAt(endingAt);
+      setChatSessionActive(true);
+
+      updateCases((currentCases) =>
+        currentCases.map((item) =>
+          item.id === chatCase.id ||
+          item.case_id === chatCase.case_id
+            ? {
+                ...item,
+                ...(response?.data?.case || {}),
+                help_session_active: true,
+                help_discord_status: "ending",
+                help_ending_at: endingAt,
+              }
+            : item
+        )
+      );
     } catch (error) {
+      setEndingSupport(false);
       setChatError(
         error?.response?.data?.detail ||
         "Live Support could not be ended."
       );
-    } finally {
-      setEndingSupport(false);
     }
   };
+
+  useEffect(() => {
+    if (!supportEndingAt || !chatSessionActive) {
+      setSupportEndCountdown(null);
+      return undefined;
+    }
+
+    let disposed = false;
+
+    const updateCountdown = () => {
+      const endMs = new Date(supportEndingAt).getTime();
+
+      if (Number.isNaN(endMs)) {
+        setSupportEndCountdown(null);
+        return;
+      }
+
+      const seconds = Math.max(
+        0,
+        Math.ceil((endMs - Date.now()) / 1000)
+      );
+
+      setSupportEndCountdown(seconds);
+
+      if (seconds <= 0 && !disposed) {
+        updateCases((currentCases) =>
+          currentCases.map((item) =>
+            item.id === chatCase?.id ||
+            item.case_id === chatCase?.case_id
+              ? {
+                  ...item,
+                  help_session_active: false,
+                  help_discord_status: "ended",
+                  help_ending_at: null,
+                }
+              : item
+          )
+        );
+
+        setChatSessionActive(false);
+        setEndingSupport(false);
+
+        window.setTimeout(() => {
+          if (disposed) return;
+
+          setIsChatOpen(false);
+          setChatCase(null);
+          setChatMessages([]);
+          setChatInput("");
+          setChatError("");
+          setHelpSent(false);
+          setChatDiscordUrl("");
+          setSupportEndingAt("");
+          setSupportEndCountdown(null);
+          playSuccessSound();
+        }, 350);
+      }
+    };
+
+    updateCountdown();
+
+    const interval = window.setInterval(
+      updateCountdown,
+      250
+    );
+
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    supportEndingAt,
+    chatSessionActive,
+    chatCase?.id,
+    chatCase?.case_id,
+    updateCases,
+  ]);
+
 
   useEffect(() => {
     if (!isChatOpen || !chatCase?.case_id) {
@@ -1593,6 +1663,11 @@ export default function Dashboard() {
         setChatSessionActive(
           payload?.help_session_active !== false &&
           payload?.active !== false
+        );
+        setSupportEndingAt(payload?.help_ending_at || "");
+        setEndingSupport(
+          payload?.help_discord_status === "ending" ||
+          Boolean(payload?.help_ending_at)
         );
         if (payload?.discord_error) {
           setChatError(payload.discord_error);
@@ -1665,7 +1740,7 @@ export default function Dashboard() {
 
     const interval = window.setInterval(
       pollDiscordReplies,
-      3000
+      1000
     );
 
     return () => {
@@ -2597,7 +2672,7 @@ export default function Dashboard() {
                 </h2>
 
                 <p className="mt-1 text-[10px] text-[#7186a0]">
-                  Support replies sync every 3 seconds
+                  Case-linked support thread · live sync
                 </p>
               </div>
 
@@ -2609,7 +2684,11 @@ export default function Dashboard() {
                     disabled={endingSupport}
                     className="px-3 py-2 rounded-xl border border-[#6b2929] bg-[#2a1414]/70 text-[9px] font-mono uppercase tracking-wider text-[#f08080] hover:bg-[#391919] disabled:opacity-50"
                   >
-                    {endingSupport ? "Ending..." : "End Support"}
+                    {supportEndCountdown !== null
+                      ? `Ending ${supportEndCountdown}`
+                      : endingSupport
+                        ? "Ending..."
+                        : "End Support"}
                   </button>
                 )}
 
@@ -2640,17 +2719,17 @@ export default function Dashboard() {
                   rel="noreferrer"
                   className="mt-2 inline-flex items-center gap-2 text-[10px] font-bold text-[#d4b25a] hover:text-[#ead58a]"
                 >
-                  💬 OPEN DISCORD SUPPORT FORUM
+                  💬 OPEN DISCORD SUPPORT THREAD
                 </a>
               ) : (
                 <span className="mt-2 inline-flex items-center gap-2 text-[10px] font-bold text-[#7186a0]">
-                  💬 CONNECTING DISCORD SUPPORT FORUM...
+                  💬 CONNECTING DISCORD SUPPORT THREAD...
                 </span>
               )}
 
               <p className="mt-2 text-[9px] font-mono uppercase tracking-wider text-[#607793]">
                 {helpSent
-                  ? "Discord forum connected"
+                  ? "Discord support connected"
                   : chatSessionActive
                     ? "Local channel active"
                     : "Support session ended"}
@@ -2662,6 +2741,23 @@ export default function Dashboard() {
                 </p>
               )}
             </div>
+
+            {supportEndCountdown !== null && (
+              <div className="mx-4 mt-4 rounded-2xl border border-[#665522] bg-[#3a2f12]/55 px-4 py-4 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+                <p className="text-[9px] font-mono uppercase tracking-[0.22em] text-[#f0d67a]">
+                  Command ending Live Support
+                </p>
+                <p className="mt-2 text-[11px] text-[#c4d0df]">
+                  Session closes in
+                </p>
+                <div className="mt-1 text-4xl font-mono font-bold text-[#d4b25a]">
+                  {supportEndCountdown}
+                </div>
+                <p className="mt-2 text-[10px] text-[#7186a0]">
+                  Transcript remains attached to {chatCase.case_id}.
+                </p>
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {chatMessages.length === 0 ? (
@@ -2722,13 +2818,21 @@ export default function Dashboard() {
                 <textarea
                   value={chatInput}
                   onChange={handleChatInputChange}
-                  placeholder="Type a support message..."
+                  disabled={supportEndCountdown !== null}
+                  placeholder={
+                    supportEndCountdown !== null
+                      ? "Support session is ending..."
+                      : "Type a support message..."
+                  }
                   className={`${INPUT_CLASS} min-h-[48px] max-h-[130px] resize-y`}
                 />
 
                 <button
                   type="submit"
-                  disabled={!chatInput.trim()}
+                  disabled={
+                    !chatInput.trim() ||
+                    supportEndCountdown !== null
+                  }
                   className="h-12 w-12 shrink-0 rounded-xl border border-[#d4b25a]/45 bg-[#d4b25a] text-[#07101b] flex items-center justify-center hover:bg-[#e2c46c] disabled:opacity-40"
                 >
                   <Send className="h-4 w-4" />

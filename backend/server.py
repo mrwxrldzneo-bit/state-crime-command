@@ -8,6 +8,7 @@ import os
 import uuid
 import logging
 import asyncio
+import json
 import re
 from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
@@ -23,6 +24,7 @@ from fastapi import (
     Query,
     BackgroundTasks,
     Header,
+    Request,
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
@@ -94,6 +96,11 @@ DISCORD_BOT_TOKEN = os.environ.get(
     "",
 ).strip()
 
+DISCORD_PUBLIC_KEY = os.environ.get(
+    "DISCORD_PUBLIC_KEY",
+    "",
+).strip()
+
 DISCORD_EVENT_SECRET = os.environ.get(
     "DISCORD_EVENT_SECRET",
     "",
@@ -154,6 +161,11 @@ HELP_BANNER_URL = (
 )
 
 DISCORD_FOOTER_ICON_URL = (
+    "https://i.postimg.cc/2S368f7w/"
+    "Screenshot-2026-09-08-at-6-28-15-AM.png"
+)
+
+CASE_FOOTER_IMAGE_URL = (
     "https://i.postimg.cc/2S368f7w/"
     "Screenshot-2026-09-08-at-6-28-15-AM.png"
 )
@@ -345,6 +357,445 @@ async def build_discord_thread_url(thread_id: str, guild_id: str = "") -> str:
         return ""
 
     return f"https://discord.com/channels/{guild_id}/{thread_id}"
+
+
+
+def build_support_control_payload(
+    case: dict,
+    session_id: str,
+    *,
+    status: str = "active",
+    ended_by: str = "",
+    ended_at: str = "",
+):
+    status_key = str(status or "active").lower()
+
+    if status_key == "ending":
+        status_text = "🟠 ENDING"
+        color = 0xD4B25A
+        description = (
+            "Command has requested termination of this Live Support session. "
+            "The attached case thread will close after the five-second countdown."
+        )
+    elif status_key in {"ended", "closed"}:
+        status_text = "🔴 CLOSED"
+        color = 0x6B2929
+        description = (
+            "This Live Support session has been closed. "
+            "The case transcript remains retained by SCC."
+        )
+    else:
+        status_text = "🟢 ACTIVE"
+        color = 0x2F8F5B
+        description = (
+            "A State Crime Command investigator has requested live assistance. "
+            "Use **Reply** to respond without cluttering this channel."
+        )
+
+    priority = str(case.get("priority") or "routine")
+    priority_text = {
+        "routine": "Routine",
+        "urgent": "Urgent",
+        "high-risk": "High-Risk",
+    }.get(priority, priority.title())
+
+    fields = [
+        {"name": "CASE ID", "value": f"`{case.get('case_id', '—')}`", "inline": True},
+        {"name": "OPERATION", "value": case.get("name", "Untitled"), "inline": True},
+        {"name": "STATUS", "value": status_text, "inline": True},
+        {"name": "LEAD INVESTIGATOR", "value": case.get("lead_investigator", "—"), "inline": True},
+        {"name": "DIVISION", "value": case.get("division", "—"), "inline": True},
+        {"name": "PRIORITY", "value": priority_text, "inline": True},
+    ]
+
+    if ended_by:
+        fields.append({"name": "ENDED BY", "value": ended_by, "inline": True})
+    if ended_at:
+        fields.append({"name": "ENDED AT", "value": ended_at, "inline": True})
+
+    embed = {
+        "author": {"name": "NSWPF · STATE CRIME COMMAND"},
+        "title": "LIVE SUPPORT CONTROL",
+        "description": description,
+        "color": color,
+        "fields": fields,
+        "thumbnail": {"url": DISCORD_FOOTER_ICON_URL},
+        "footer": {
+            "text": "SCC Systems · Case-linked Live Support",
+            "icon_url": DISCORD_FOOTER_ICON_URL,
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    components = []
+    if status_key == "active":
+        components = [{
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": 1,
+                    "label": "Reply",
+                    "emoji": {"name": "💬"},
+                    "custom_id": f"scc_support_reply:{session_id}",
+                },
+                {
+                    "type": 2,
+                    "style": 4,
+                    "label": "End Support",
+                    "emoji": {"name": "⛔"},
+                    "custom_id": f"scc_support_end:{session_id}",
+                },
+            ],
+        }]
+    elif status_key == "ending":
+        components = [{
+            "type": 1,
+            "components": [{
+                "type": 2,
+                "style": 2,
+                "label": "Ending…",
+                "custom_id": f"scc_support_ending:{session_id}",
+                "disabled": True,
+            }],
+        }]
+
+    return {
+        "embeds": [embed],
+        "components": components,
+        "allowed_mentions": {"parse": []},
+    }
+
+
+async def post_discord_thread_message(thread_id: str, content: str):
+    thread_id = str(thread_id or "").strip()
+    if not thread_id or not DISCORD_BOT_TOKEN:
+        return None
+
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            response = await hc.post(
+                f"https://discord.com/api/v10/channels/{thread_id}/messages",
+                json={
+                    "content": str(content or "")[:2000],
+                    "allowed_mentions": {"parse": []},
+                },
+                headers=headers,
+            )
+        if response.is_success:
+            return response.json()
+        logger.warning(
+            "Discord thread message failed: HTTP %s — %s",
+            response.status_code,
+            response.text[:400],
+        )
+    except Exception as exc:
+        logger.warning("Discord thread message failed: %s", exc)
+
+    return None
+
+
+async def edit_support_control_message(
+    case: dict,
+    *,
+    status: str,
+    ended_by: str = "",
+    ended_at: str = "",
+):
+    parent_id = str(case.get("help_discord_parent_channel_id") or "").strip()
+    message_id = str(case.get("help_discord_message_id") or "").strip()
+    session_id = str(case.get("help_session_id") or "").strip()
+
+    if not parent_id or not message_id or not session_id or not DISCORD_BOT_TOKEN:
+        return False
+
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            response = await hc.patch(
+                f"https://discord.com/api/v10/channels/{parent_id}/messages/{message_id}",
+                json=build_support_control_payload(
+                    case,
+                    session_id,
+                    status=status,
+                    ended_by=ended_by,
+                    ended_at=ended_at,
+                ),
+                headers=headers,
+            )
+        return response.is_success
+    except Exception as exc:
+        logger.warning("Discord support control update failed: %s", exc)
+        return False
+
+
+async def begin_support_end(case: dict, ended_by: str):
+    if not case or not case.get("help_session_id"):
+        return None
+    if not case.get("help_session_active"):
+        return case.get("help_ending_at")
+
+    ending_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=5)
+    ).isoformat()
+
+    await db.cases.update_one(
+        {"id": case["id"]},
+        {"$set": {
+            "help_discord_status": "ending",
+            "help_ending_at": ending_at,
+            "help_ending_by": ended_by,
+            "updated_at": now_iso(),
+        }},
+    )
+
+    await db.tactical_sessions.update_one(
+        {"id": case["help_session_id"], "active": True},
+        {"$set": {"ending_at": ending_at, "ending_by": ended_by}},
+    )
+
+    refreshed = await db.cases.find_one({"id": case["id"]}, {"_id": 0})
+    thread_id = str(case.get("help_discord_channel_id") or "").strip()
+
+    if thread_id:
+        await post_discord_thread_message(
+            thread_id,
+            (
+                "⚠️ **LIVE SUPPORT END REQUESTED**\n"
+                f"Requested by **{ended_by}**.\n"
+                "Session will close in **5 seconds**."
+            ),
+        )
+
+    if refreshed:
+        await edit_support_control_message(refreshed, status="ending")
+
+    return ending_at
+
+
+async def finalize_support_end(
+    case_id: str,
+    session_id: str,
+    ended_by: str,
+    ending_at: str,
+):
+    try:
+        target = datetime.fromisoformat(str(ending_at).replace("Z", "+00:00"))
+    except Exception:
+        target = datetime.now(timezone.utc) + timedelta(seconds=5)
+
+    delay = max(0.0, (target - datetime.now(timezone.utc)).total_seconds())
+    if delay:
+        await asyncio.sleep(delay)
+
+    case = await db.cases.find_one({"id": case_id}, {"_id": 0})
+    if not case or not case.get("help_session_active"):
+        return
+    if str(case.get("help_session_id") or "") != str(session_id):
+        return
+    if str(case.get("help_ending_at") or "") != str(ending_at):
+        return
+
+    session = await db.tactical_sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session:
+        return
+
+    ts = now_iso()
+    messages = session.get("messages", [])
+    transcript_lines = [
+        (
+            f"[{m.get('created_at', '—')}] "
+            f"{m.get('username', 'Unknown')} "
+            f"({m.get('officer_id', '—')}): "
+            f"{m.get('message', '')}"
+        )
+        for m in messages
+    ]
+    transcript = "\n".join(transcript_lines)[:12000] or "No messages recorded."
+
+    entry = TimelineNote(
+        note=(
+            f"Live support session ended by {ended_by}."
+            f"\n\nTranscript:\n{transcript}"
+        ),
+        author=ended_by,
+        kind="support",
+        created_at=ts,
+    )
+
+    await db.tactical_sessions.update_one(
+        {"id": session_id},
+        {"$set": {
+            "active": False,
+            "cleared_by": ended_by,
+            "cleared_at": ts,
+            "ended_at": ts,
+        }},
+    )
+
+    thread_id = str(case.get("help_discord_channel_id") or "").strip()
+    if thread_id and DISCORD_BOT_TOKEN:
+        await post_discord_thread_message(
+            thread_id,
+            f"🔒 **LIVE SUPPORT CLOSED**\nEnded by **{ended_by}**.",
+        )
+
+        headers = {
+            "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10) as hc:
+                response = await hc.patch(
+                    f"https://discord.com/api/v10/channels/{thread_id}",
+                    json={"archived": True, "locked": True},
+                    headers=headers,
+                )
+                if not response.is_success:
+                    await hc.patch(
+                        f"https://discord.com/api/v10/channels/{thread_id}",
+                        json={"archived": True},
+                        headers=headers,
+                    )
+        except Exception as exc:
+            logger.warning(
+                "Discord support thread archive failed for %s: %s",
+                thread_id,
+                exc,
+            )
+
+    await db.cases.update_one(
+        {"id": case_id},
+        {
+            "$set": {
+                "help_session_active": False,
+                "help_discord_status": "ended",
+                "help_ending_at": None,
+                "help_ending_by": ended_by,
+                "updated_at": ts,
+            },
+            "$push": {"notes": entry.model_dump()},
+        },
+    )
+
+    closed_case = await db.cases.find_one({"id": case_id}, {"_id": 0})
+    if closed_case:
+        await edit_support_control_message(
+            closed_case,
+            status="closed",
+            ended_by=ended_by,
+            ended_at=ts,
+        )
+
+
+async def begin_and_finalize_support_end(case_id: str, ended_by: str):
+    case = await db.cases.find_one({"id": case_id}, {"_id": 0})
+    if not case:
+        return
+    ending_at = await begin_support_end(case, ended_by)
+    if ending_at:
+        await finalize_support_end(
+            case["id"],
+            case["help_session_id"],
+            ended_by,
+            ending_at,
+        )
+
+
+async def deliver_discord_modal_reply(
+    case_id: str,
+    session_id: str,
+    author_name: str,
+    author_id: str,
+    reply_text: str,
+):
+    case = await db.cases.find_one(
+        {
+            "id": case_id,
+            "help_session_id": session_id,
+            "help_session_active": True,
+        },
+        {"_id": 0},
+    )
+    if not case:
+        return
+
+    thread_id = str(case.get("help_discord_channel_id") or "").strip()
+    if not thread_id:
+        return
+
+    sent = await post_discord_thread_message(
+        thread_id,
+        f"**{author_name} [COMMAND]**\n{reply_text[:1800]}",
+    )
+    discord_message_id = str((sent or {}).get("id") or "").strip()
+
+    incoming = {
+        "id": str(uuid.uuid4()),
+        "username": f"{author_name} [DISCORD]",
+        "officer_id": author_id,
+        "message": reply_text[:2000],
+        "created_at": now_iso(),
+        "source": "discord",
+        "discord_message_id": discord_message_id or None,
+        "discord_channel_id": thread_id,
+    }
+
+    await db.tactical_sessions.update_one(
+        {"id": session_id, "active": True},
+        {"$push": {"messages": incoming}},
+    )
+
+
+def verify_discord_interaction_signature(
+    raw_body: bytes,
+    signature: str,
+    timestamp: str,
+) -> bool:
+    if not DISCORD_PUBLIC_KEY or not signature or not timestamp:
+        return False
+
+    message = timestamp.encode("utf-8") + raw_body
+
+    try:
+        from nacl.signing import VerifyKey
+        from nacl.exceptions import BadSignatureError
+        try:
+            VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY)).verify(
+                message,
+                bytes.fromhex(signature),
+            )
+            return True
+        except (BadSignatureError, ValueError, TypeError):
+            return False
+    except ImportError:
+        pass
+
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from cryptography.exceptions import InvalidSignature
+        try:
+            Ed25519PublicKey.from_public_bytes(
+                bytes.fromhex(DISCORD_PUBLIC_KEY)
+            ).verify(
+                bytes.fromhex(signature),
+                message,
+            )
+            return True
+        except (InvalidSignature, ValueError, TypeError):
+            return False
+    except ImportError:
+        logger.error("Discord Interactions requires PyNaCl or cryptography.")
+        return False
 
 
 async def create_support_forum_post(
@@ -547,30 +998,67 @@ async def create_support_forum_post(
             "error": "",
         }
 
-    # Normal guild text channel. Create one public thread per case so Discord
-    # replies stay isolated and can sync back to the correct website chat.
+    # Normal guild text channel.
+    # One polished control message in the parent channel; all actual chat is
+    # placed inside a public thread attached directly to that message.
     if channel_type == 0:
-        thread_payload = {
-            "name": thread_name,
-            "auto_archive_duration": 1440,
-            "type": 11,
-            "invitable": False,
-        }
+        session_id = str(request.get("session_id") or "").strip()
+        if not session_id:
+            return {"error": "Support session ID is missing."}
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as hc:
+                control_response = await hc.post(
+                    f"https://discord.com/api/v10/channels/{parent_id}/messages",
+                    json=build_support_control_payload(
+                        case,
+                        session_id,
+                        status="active",
+                    ),
+                    headers=headers,
+                )
+        except Exception as exc:
+            return {"error": f"Discord support control message failed: {exc}"}
+
+        if not control_response.is_success:
+            return {
+                "error": (
+                    "Discord support control message failed "
+                    f"(HTTP {control_response.status_code}): "
+                    f"{control_response.text[:350]}"
+                )
+            }
+
+        control_data = control_response.json()
+        control_message_id = str(control_data.get("id") or "").strip()
+        if not control_message_id:
+            return {"error": "Discord created no support control message ID."}
 
         try:
             async with httpx.AsyncClient(timeout=15) as hc:
                 thread_response = await hc.post(
-                    f"https://discord.com/api/v10/channels/{parent_id}/threads",
-                    json=thread_payload,
+                    (
+                        "https://discord.com/api/v10/channels/"
+                        f"{parent_id}/messages/{control_message_id}/threads"
+                    ),
+                    json={
+                        "name": thread_name,
+                        "auto_archive_duration": 1440,
+                    },
                     headers=headers,
                 )
         except Exception as exc:
-            return {"error": f"Discord support thread creation failed: {exc}"}
+            return {
+                "error": (
+                    "Discord attached support thread creation failed: "
+                    f"{exc}"
+                )
+            }
 
         if not thread_response.is_success:
             return {
                 "error": (
-                    f"Discord support thread creation failed "
+                    "Discord attached support thread creation failed "
                     f"(HTTP {thread_response.status_code}): "
                     f"{thread_response.text[:350]}"
                 )
@@ -585,46 +1073,28 @@ async def create_support_forum_post(
         ).strip()
 
         if not thread_id:
-            return {"error": "Discord created no support thread ID."}
+            return {"error": "Discord created no attached support thread ID."}
 
-        starter_payload = {
-            "content": content,
-            "embeds": [embed],
-            "allowed_mentions": allowed_mentions,
-        }
+        starter_data = await post_discord_thread_message(
+            thread_id,
+            f"**{username} [{officer_id}]**\n{message[:1800]}",
+        )
 
-        try:
-            async with httpx.AsyncClient(timeout=15) as hc:
-                message_response = await hc.post(
-                    f"https://discord.com/api/v10/channels/{thread_id}/messages",
-                    json=starter_payload,
-                    headers=headers,
-                )
-        except Exception as exc:
+        if starter_data is None:
             return {
                 "error": (
-                    "Discord support thread was created, but the starter "
-                    f"message failed: {exc}"
+                    "Discord created the attached support thread, "
+                    "but the initial chat message could not be posted."
                 )
             }
-
-        if not message_response.is_success:
-            return {
-                "error": (
-                    "Discord support thread was created, but the starter "
-                    f"message failed (HTTP {message_response.status_code}): "
-                    f"{message_response.text[:350]}"
-                )
-            }
-
-        message_data = message_response.json()
-        thread_url = await build_discord_thread_url(thread_id, guild_id)
 
         return {
             "thread_id": thread_id,
-            "message_id": str(message_data.get("id") or ""),
+            "message_id": control_message_id,
+            "parent_channel_id": parent_id,
+            "starter_message_id": str(starter_data.get("id") or ""),
             "guild_id": guild_id,
-            "thread_url": thread_url,
+            "thread_url": await build_discord_thread_url(thread_id, guild_id),
             "error": "",
         }
 
@@ -855,7 +1325,7 @@ async def notify_discord(case: dict):
         )
         return
 
-    mentions = " ".join(f"<@&{rid}>" for rid in DISCORD_PING_ROLE_IDS)
+    mentions = "@everyone"
     priority = case.get("priority", "routine")
     priority_label = {
         "routine": "Routine",
@@ -909,10 +1379,15 @@ async def notify_discord(case: dict):
         ],
     }
 
-    # Embed 3 — system footer artwork and automated timestamp only.
+    # Embed 3 — full-width SCC footer artwork and timestamp.
     system_base_embed = {
+        "description": "\u200b",
+        "color": 0x41597E,
         "image": {
-            "url": DISCORD_FOOTER_ICON_URL,
+            "url": CASE_FOOTER_IMAGE_URL,
+        },
+        "footer": {
+            "text": "SCC Systems · Automated Case Alert",
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -925,7 +1400,7 @@ async def notify_discord(case: dict):
             system_base_embed,
         ],
         "allowed_mentions": {
-            "parse": ["roles"],
+            "parse": ["everyone"],
         },
     }
 
@@ -1273,11 +1748,14 @@ class Case(BaseModel):
     discord_channel_id: Optional[str] = None
     help_discord_message_id: Optional[str] = None
     help_discord_channel_id: Optional[str] = None
+    help_discord_parent_channel_id: Optional[str] = None
     help_discord_thread_url: Optional[str] = None
     help_discord_status: Optional[str] = None
     help_discord_error: Optional[str] = None
     help_session_id: Optional[str] = None
     help_session_active: bool = False
+    help_ending_at: Optional[str] = None
+    help_ending_by: Optional[str] = None
     denial_reason: Optional[str] = None
 
     created_by: str
@@ -1679,6 +2157,7 @@ async def request_case_help(
         "message": message,
         "officer_id": session["officer_id"],
         "username": user["username"],
+        "session_id": session_id,
     }
 
     discord_result = await create_support_forum_post(
@@ -1694,6 +2173,9 @@ async def request_case_help(
     if discord_result:
         thread_id = str(discord_result.get("thread_id") or "").strip()
         message_id = str(discord_result.get("message_id") or "").strip()
+        parent_channel_id = str(
+            discord_result.get("parent_channel_id") or ""
+        ).strip()
         discord_thread_url = str(
             discord_result.get("thread_url") or ""
         ).strip()
@@ -1706,6 +2188,7 @@ async def request_case_help(
                     "$set": {
                         "help_discord_message_id": message_id or None,
                         "help_discord_channel_id": thread_id,
+                        "help_discord_parent_channel_id": parent_channel_id or None,
                         "help_discord_thread_url": discord_thread_url or None,
                         "help_discord_status": "connected",
                         "help_discord_error": None,
@@ -1801,6 +2284,11 @@ async def get_help_session(
             case.get("help_discord_error") or ""
         ).strip(),
         "help_session_active": bool(case.get("help_session_active")),
+        "help_discord_status": str(
+            case.get("help_discord_status") or ""
+        ).strip(),
+        "help_ending_at": case.get("help_ending_at"),
+        "help_ending_by": case.get("help_ending_by"),
     }
 
 
@@ -2116,15 +2604,11 @@ async def receive_discord_reply(
 @api_router.post("/cases/{case_uid}/help/clear")
 async def clear_help_session(
     case_uid: str,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_admin),
 ):
     case = await db.cases.find_one(
-        {
-            "$or": [
-                {"id": case_uid},
-                {"case_id": case_uid},
-            ]
-        },
+        {"$or": [{"id": case_uid}, {"case_id": case_uid}]},
         {"_id": 0},
     )
 
@@ -2134,99 +2618,215 @@ async def clear_help_session(
             detail="No live support session exists for this case.",
         )
 
-    session_id = case["help_session_id"]
-    session = await db.tactical_sessions.find_one(
-        {"id": session_id},
-        {"_id": 0},
-    )
-    if not session:
+    if not case.get("help_session_active"):
         raise HTTPException(
-            status_code=404,
-            detail="Live support session not found.",
+            status_code=409,
+            detail="Live support session is already closed.",
         )
 
-    ts = now_iso()
-    messages = session.get("messages", [])
-    transcript_lines = [
-        (
-            f"[{m.get('created_at', '—')}] "
-            f"{m.get('username', 'Unknown')} "
-            f"({m.get('officer_id', '—')}): "
-            f"{m.get('message', '')}"
-        )
-        for m in messages
-    ]
-    transcript = "\n".join(transcript_lines)[:12000] or "No messages recorded."
-
-    entry = TimelineNote(
-        note=(
-            f"Live support session ended by {user['username']}."
-            f"\n\nTranscript:\n{transcript}"
-        ),
-        author=user["username"],
-        kind="support",
-        created_at=ts,
-    )
-
-    await db.tactical_sessions.update_one(
-        {"id": session_id},
-        {
-            "$set": {
-                "active": False,
-                "cleared_by": user["username"],
-                "cleared_at": ts,
-            }
-        },
-    )
-
-    thread_id = str(case.get("help_discord_channel_id") or "").strip()
-    if thread_id and DISCORD_BOT_TOKEN:
-        headers = {
-            "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
-            "Content-Type": "application/json",
+    existing_ending_at = str(case.get("help_ending_at") or "").strip()
+    if existing_ending_at:
+        return {
+            "message": "Live support is already ending.",
+            "case": case,
+            "ending_at": existing_ending_at,
+            "countdown_seconds": 5,
         }
-        # Archive and lock the Discord support thread. If the bot lacks
-        # Manage Threads for locking, retry with archive-only.
-        try:
-            async with httpx.AsyncClient(timeout=10) as hc:
-                response = await hc.patch(
-                    f"https://discord.com/api/v10/channels/{thread_id}",
-                    json={"archived": True, "locked": True},
-                    headers=headers,
-                )
-                if not response.is_success:
-                    await hc.patch(
-                        f"https://discord.com/api/v10/channels/{thread_id}",
-                        json={"archived": True},
-                        headers=headers,
-                    )
-        except Exception as exc:
-            logger.warning(
-                "Discord support thread archive failed for %s: %s",
-                thread_id,
-                exc,
-            )
 
-    await db.cases.update_one(
-        {"id": case["id"]},
-        {
-            "$set": {
-                "help_session_active": False,
-                "help_discord_status": "ended",
-                "updated_at": ts,
-            },
-            "$push": {"notes": entry.model_dump()},
-        },
+    ending_at = await begin_support_end(case, user["username"])
+
+    background_tasks.add_task(
+        finalize_support_end,
+        case["id"],
+        case["help_session_id"],
+        user["username"],
+        ending_at,
     )
 
-    updated = await db.cases.find_one(
-        {"id": case["id"]},
-        {"_id": 0},
-    )
+    updated = await db.cases.find_one({"id": case["id"]}, {"_id": 0})
+
     return {
-        "message": "Live support session ended.",
+        "message": "Live support ending in 5 seconds.",
         "case": updated,
-        "transcript": transcript,
+        "ending_at": ending_at,
+        "countdown_seconds": 5,
+    }
+
+
+
+@api_router.post("/discord/interactions")
+async def discord_interactions(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    raw_body = await request.body()
+    signature = request.headers.get("X-Signature-Ed25519", "")
+    timestamp = request.headers.get("X-Signature-Timestamp", "")
+
+    if not verify_discord_interaction_signature(
+        raw_body,
+        signature,
+        timestamp,
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Discord interaction signature.",
+        )
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Discord interaction payload.",
+        )
+
+    interaction_type = payload.get("type")
+
+    if interaction_type == 1:
+        return {"type": 1}
+
+    data = payload.get("data") or {}
+    custom_id = str(data.get("custom_id") or "")
+
+    member = payload.get("member") or {}
+    discord_user = member.get("user") or payload.get("user") or {}
+
+    author_name = (
+        member.get("nick")
+        or discord_user.get("global_name")
+        or discord_user.get("username")
+        or "COMMAND STAFF"
+    )
+    author_id = str(discord_user.get("id") or "").strip()
+
+    if (
+        interaction_type == 3
+        and custom_id.startswith("scc_support_reply:")
+    ):
+        session_id = custom_id.split(":", 1)[1].strip()
+        return {
+            "type": 9,
+            "data": {
+                "custom_id": f"scc_support_reply_modal:{session_id}",
+                "title": "SCC Live Support Reply",
+                "components": [{
+                    "type": 1,
+                    "components": [{
+                        "type": 4,
+                        "custom_id": "reply_text",
+                        "label": "Command response",
+                        "style": 2,
+                        "min_length": 1,
+                        "max_length": 1800,
+                        "required": True,
+                        "placeholder": "Type the reply for the case support thread...",
+                    }],
+                }],
+            },
+        }
+
+    if (
+        interaction_type == 3
+        and custom_id.startswith("scc_support_end:")
+    ):
+        session_id = custom_id.split(":", 1)[1].strip()
+
+        case = await db.cases.find_one(
+            {
+                "help_session_id": session_id,
+                "help_session_active": True,
+            },
+            {"_id": 0},
+        )
+
+        if not case:
+            return {
+                "type": 4,
+                "data": {
+                    "content": "This Live Support session is already closed.",
+                    "flags": 64,
+                },
+            }
+
+        background_tasks.add_task(
+            begin_and_finalize_support_end,
+            case["id"],
+            author_name,
+        )
+
+        return {
+            "type": 4,
+            "data": {
+                "content": (
+                    "Ending Live Support. "
+                    "The SCC session will close in 5 seconds."
+                ),
+                "flags": 64,
+            },
+        }
+
+    if (
+        interaction_type == 5
+        and custom_id.startswith("scc_support_reply_modal:")
+    ):
+        session_id = custom_id.split(":", 1)[1].strip()
+        reply_text = ""
+
+        for row in data.get("components") or []:
+            for component in row.get("components") or []:
+                if component.get("custom_id") == "reply_text":
+                    reply_text = str(component.get("value") or "").strip()
+
+        if not reply_text:
+            return {
+                "type": 4,
+                "data": {
+                    "content": "Reply cannot be empty.",
+                    "flags": 64,
+                },
+            }
+
+        case = await db.cases.find_one(
+            {
+                "help_session_id": session_id,
+                "help_session_active": True,
+            },
+            {"_id": 0},
+        )
+
+        if not case:
+            return {
+                "type": 4,
+                "data": {
+                    "content": "This Live Support session is no longer active.",
+                    "flags": 64,
+                },
+            }
+
+        background_tasks.add_task(
+            deliver_discord_modal_reply,
+            case["id"],
+            session_id,
+            author_name,
+            author_id,
+            reply_text,
+        )
+
+        return {
+            "type": 4,
+            "data": {
+                "content": "Reply sent to the case support thread.",
+                "flags": 64,
+            },
+        }
+
+    return {
+        "type": 4,
+        "data": {
+            "content": "Unsupported SCC interaction.",
+            "flags": 64,
+        },
     }
 
 
