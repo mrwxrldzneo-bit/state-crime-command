@@ -1,172 +1,187 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
+
 import {
   Lock,
   User,
-  BadgeCheck,
   Loader2,
   AlertTriangle,
   ShieldCheck,
+  Radio,
   CheckCircle2,
+  Activity,
+  KeyRound,
 } from "lucide-react";
 
-const AUTH_STAGES = [
-  {
-    progress: 0,
-    code: "00",
-    text: "VERIFYING OFFICER CREDENTIALS",
-  },
-  {
-    progress: 25,
-    code: "01",
-    text: "VALIDATING CLEARANCE LEVEL",
-  },
-  {
-    progress: 50,
-    code: "02",
-    text: "ESTABLISHING SECURE SESSION",
-  },
-  {
-    progress: 75,
-    code: "03",
-    text: "VERIFYING COMMAND ACCESS",
-  },
-  {
-    progress: 100,
-    code: "04",
-    text: "AUTHENTICATION COMPLETE",
-  },
-];
-
-const sleep = (milliseconds) =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-function playAccessGrantedSound() {
+function playSuccessSound(audioContext) {
   try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!audioContext) return;
 
-    if (!AudioContext) {
-      return;
-    }
+    const now = audioContext.currentTime;
 
-    const audioContext = new AudioContext();
+    const master = audioContext.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.20, now + 0.02);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+    master.connect(audioContext.destination);
 
-    const oscillatorOne = audioContext.createOscillator();
-    const oscillatorTwo = audioContext.createOscillator();
+    const click = audioContext.createOscillator();
+    const clickGain = audioContext.createGain();
 
-    const gainOne = audioContext.createGain();
-    const gainTwo = audioContext.createGain();
+    click.type = "square";
+    click.frequency.setValueAtTime(900, now);
 
-    oscillatorOne.type = "sine";
-    oscillatorTwo.type = "sine";
+    clickGain.gain.setValueAtTime(0.08, now);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
 
-    oscillatorOne.frequency.setValueAtTime(520, audioContext.currentTime);
+    click.connect(clickGain);
+    clickGain.connect(master);
 
-    oscillatorOne.frequency.linearRampToValueAtTime(
-      760,
-      audioContext.currentTime + 0.18,
-    );
+    click.start(now);
+    click.stop(now + 0.05);
 
-    oscillatorTwo.frequency.setValueAtTime(
-      740,
-      audioContext.currentTime + 0.18,
-    );
+    const sweep = audioContext.createOscillator();
+    const sweepGain = audioContext.createGain();
 
-    oscillatorTwo.frequency.linearRampToValueAtTime(
-      988,
-      audioContext.currentTime + 0.36,
-    );
+    sweep.type = "sine";
+    sweep.frequency.setValueAtTime(420, now + 0.03);
+    sweep.frequency.exponentialRampToValueAtTime(880, now + 0.22);
 
-    gainOne.gain.setValueAtTime(0.0001, audioContext.currentTime);
+    sweepGain.gain.setValueAtTime(0.0001, now + 0.03);
+    sweepGain.gain.exponentialRampToValueAtTime(0.055, now + 0.08);
+    sweepGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
 
-    gainOne.gain.exponentialRampToValueAtTime(
-      0.12,
-      audioContext.currentTime + 0.02,
-    );
+    sweep.connect(sweepGain);
+    sweepGain.connect(master);
 
-    gainOne.gain.exponentialRampToValueAtTime(
-      0.0001,
-      audioContext.currentTime + 0.45,
-    );
+    sweep.start(now + 0.03);
+    sweep.stop(now + 0.27);
 
-    gainTwo.gain.setValueAtTime(0.0001, audioContext.currentTime + 0.18);
+    const confirm = audioContext.createOscillator();
+    const confirmGain = audioContext.createGain();
 
-    gainTwo.gain.exponentialRampToValueAtTime(
-      0.1,
-      audioContext.currentTime + 0.2,
-    );
+    confirm.type = "sine";
+    confirm.frequency.setValueAtTime(784, now + 0.23);
+    confirm.frequency.setValueAtTime(1047, now + 0.36);
 
-    gainTwo.gain.exponentialRampToValueAtTime(
-      0.0001,
-      audioContext.currentTime + 0.65,
-    );
+    confirmGain.gain.setValueAtTime(0.0001, now + 0.23);
+    confirmGain.gain.exponentialRampToValueAtTime(0.09, now + 0.25);
+    confirmGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.58);
 
-    oscillatorOne.connect(gainOne);
-    gainOne.connect(audioContext.destination);
+    confirm.connect(confirmGain);
+    confirmGain.connect(master);
 
-    oscillatorTwo.connect(gainTwo);
-    gainTwo.connect(audioContext.destination);
+    confirm.start(now + 0.23);
+    confirm.stop(now + 0.6);
 
-    oscillatorOne.start();
-    oscillatorTwo.start(audioContext.currentTime + 0.18);
+    const bass = audioContext.createOscillator();
+    const bassGain = audioContext.createGain();
 
-    oscillatorOne.stop(audioContext.currentTime + 0.45);
-    oscillatorTwo.stop(audioContext.currentTime + 0.65);
+    bass.type = "triangle";
+    bass.frequency.setValueAtTime(220, now + 0.24);
 
-    oscillatorTwo.addEventListener("ended", () => {
+    bassGain.gain.setValueAtTime(0.0001, now + 0.24);
+    bassGain.gain.exponentialRampToValueAtTime(0.045, now + 0.27);
+    bassGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+
+    bass.connect(bassGain);
+    bassGain.connect(master);
+
+    bass.start(now + 0.24);
+    bass.stop(now + 0.57);
+
+    window.setTimeout(() => {
       audioContext.close().catch(() => {});
-    });
+    }, 800);
   } catch (error) {
-    console.warn("Access granted sound could not be played:", error);
+    console.warn("Unable to play confirmation sound:", error);
   }
 }
 
+function TacticalCrest() {
+  return (
+    <div className="relative flex items-center justify-center p-3">
+      <div className="absolute inset-0 rounded-[1.25rem] border border-[#d4b25a]/20 bg-[#d4b25a]/[0.025] shadow-[0_0_45px_rgba(212,178,90,0.08)]" />
+
+      <img
+        src="https://i.postimg.cc/nr2YrNNY/nswpf-logo.png"
+        alt="NSW Police Force logo"
+        className="relative h-28 w-28 object-contain drop-shadow-[0_0_22px_rgba(212,178,90,0.28)]"
+      />
+    </div>
+  );
+}
+
+const TIMELINE = [
+  "AUTHENTICATING OPERATOR",
+  "VERIFYING CLEARANCE",
+  "LINKING SESSION AUDIT",
+  "ESTABLISHING SECURE TERMINAL",
+];
+
 export default function Login() {
   const authContext = useAuth();
-  const navigate = useNavigate();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [officerId, setOfficerId] = useState("");
+
+  const [officerId, setOfficerId] = useState(() => {
+    try {
+      return localStorage.getItem("scc_officer_id") || "";
+    } catch {
+      return "";
+    }
+  });
 
   const [error, setError] = useState("");
-
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [stageIndex, setStageIndex] = useState(0);
-  const [accessGranted, setAccessGranted] = useState(false);
-
+  const [timelineStep, setTimelineStep] = useState(-1);
   const [timeStr, setTimeStr] = useState("");
   const [dateStr, setDateStr] = useState("");
-  const [logLines, setLogLines] = useState([]);
 
-  /*
-   * Sydney clock
-   */
+  useEffect(() => {
+    try {
+      document.documentElement.style.backgroundColor = "#0b1728";
+      document.body.style.backgroundColor = "#0b1728";
+    } catch {
+      // Best-effort protection against a white route-transition frame.
+    }
+
+    return () => {
+      try {
+        document.documentElement.style.backgroundColor = "#0b1728";
+        document.body.style.backgroundColor = "#0b1728";
+      } catch {
+        // Ignore styling cleanup failures.
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
 
-      const timeOptions = {
-        timeZone: "Australia/Sydney",
-        hour12: false,
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      };
+      setTimeStr(
+        now.toLocaleTimeString("en-AU", {
+          timeZone: "Australia/Sydney",
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      );
 
-      setTimeStr(now.toLocaleTimeString("en-AU", timeOptions));
-
-      const dateOptions = {
-        timeZone: "Australia/Sydney",
-        weekday: "long",
-        day: "2-digit",
-        month: "long",
-        year: "numeric",
-      };
-
-      setDateStr(now.toLocaleDateString("en-AU", dateOptions).toUpperCase());
+      setDateStr(
+        now
+          .toLocaleDateString("en-AU", {
+            timeZone: "Australia/Sydney",
+            weekday: "long",
+            day: "2-digit",
+            month: "long",
+            year: "numeric",
+          })
+          .toUpperCase()
+      );
     };
 
     updateClock();
@@ -176,528 +191,468 @@ export default function Login() {
     return () => clearInterval(interval);
   }, []);
 
-  /*
-   * Authentication event log
-   */
-  const addLog = (message) => {
-    const timestamp = new Date().toLocaleTimeString("en-AU", {
-      hour12: false,
-    });
+  const timezoneLabel = useMemo(() => {
+    try {
+      const parts = new Intl.DateTimeFormat("en-AU", {
+        timeZone: "Australia/Sydney",
+        timeZoneName: "short",
+      }).formatToParts(new Date());
 
-    setLogLines((previous) => [...previous, `[${timestamp}] ${message}`]);
-  };
+      return (
+        parts.find((part) => part.type === "timeZoneName")?.value ||
+        "AEST"
+      );
+    } catch {
+      return "AEST";
+    }
+  }, [timeStr]);
 
-  /*
-   * Visual authentication sequence.
-   *
-   * 00% → 25% → 50% → 75% → 100%
-   */
-  const runAuthenticationSequence = async () => {
-    for (let index = 0; index < AUTH_STAGES.length; index++) {
-      const stage = AUTH_STAGES[index];
-
-      setStageIndex(index);
-      setProgress(stage.progress);
-
-      addLog(`${stage.code} ${stage.text}... PROCESSING`);
-
-      await sleep(850);
-
-      addLog(`${stage.code} ${stage.text}... COMPLETE`);
-
-      if (index < AUTH_STAGES.length - 1) {
-        await sleep(250);
-      }
+  useEffect(() => {
+    if (!loading) {
+      return undefined;
     }
 
-    setProgress(100);
-    setStageIndex(AUTH_STAGES.length - 1);
-    setAccessGranted(true);
+    setTimelineStep(0);
 
-    addLog("SECURE SESSION ESTABLISHED");
-    addLog("ACCESS GRANTED — COMMAND TERMINAL READY");
+    const timers = TIMELINE.slice(1).map((_, index) =>
+      window.setTimeout(
+        () => setTimelineStep(index + 1),
+        1050 * (index + 1)
+      )
+    );
 
-    playAccessGrantedSound();
+    return () => timers.forEach(clearTimeout);
+  }, [loading]);
 
-    await sleep(1100);
-
-    /*
-     * Update AuthContext using the real authenticated session.
-     */
-    if (typeof authContext?.completeLogin === "function") {
-      authContext.completeLogin();
-    }
-
-    /*
-     * Navigate directly to the protected cases page.
-     */
-    navigate("/cases", { replace: true });
-  };
-
-  /*
-   * Form submission
-   */
-  const submit = async (e) => {
-    e.preventDefault();
+  const submit = async (event) => {
+    event.preventDefault();
 
     if (loading) {
       return;
     }
 
-    const cleanUsername = username.trim();
-    const cleanPassword = password.trim();
-    const cleanOfficerId = officerId.trim();
+    const normalizedUsername = username.trim().toUpperCase();
+    const normalizedOfficerId = officerId.trim().toUpperCase();
 
-    if (!cleanUsername || !cleanPassword || !cleanOfficerId) {
-      setError("Username, access code, and officer ID are required.");
+    if (
+      !normalizedUsername ||
+      !password ||
+      !normalizedOfficerId
+    ) {
+      setError(
+        "USERNAME, ACCESS CODE AND OPERATOR IDENTIFICATION ARE REQUIRED."
+      );
       return;
     }
 
     setError("");
     setLoading(true);
-    setProgress(0);
-    setStageIndex(0);
-    setAccessGranted(false);
-    setLogLines([]);
+    setTimelineStep(0);
+
+    const authenticationStartedAt = performance.now();
+    const minimumAuthenticationMs = 4200;
 
     try {
-      const loginFunc =
-        authContext?.login || authContext?.loginUser || authContext?.signIn;
+      localStorage.setItem(
+        "scc_officer_id",
+        normalizedOfficerId
+      );
+    } catch {
+      // Browser storage is optional.
+    }
 
-      if (typeof loginFunc !== "function") {
-        throw new Error("Authentication service layer unavailable.");
+    let audioContext = null;
+
+    try {
+      const AudioContextClass =
+        window.AudioContext || window.webkitAudioContext;
+
+      if (AudioContextClass) {
+        audioContext = new AudioContextClass();
+
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
+        }
       }
+    } catch (audioError) {
+      console.warn(
+        "Unable to initialise confirmation audio:",
+        audioError
+      );
+    }
 
-      addLog("AUTHENTICATION REQUEST INITIALISED");
-      addLog("OFFICER IDENTIFIER RECORDED");
+    try {
+      const result = await authContext.login(
+        normalizedUsername,
+        password,
+        normalizedOfficerId
+      );
 
-      /*
-       * REAL BACKEND AUTHENTICATION
-       *
-       * Username + access code are verified by the
-       * backend. Officer ID is stored with the session
-       * for operator/audit identification.
-       */
-      const result = await Promise.race([
-        loginFunc(cleanUsername, cleanPassword, cleanOfficerId),
+      if (!result || result.ok !== true) {
+        audioContext?.close().catch(() => {});
 
-        new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({
-              ok: false,
-              error: "Authentication request timed out.",
-            });
-          }, 15000);
-        }),
-      ]);
-
-      if (!result?.ok) {
         setLoading(false);
-        setProgress(0);
-        setStageIndex(0);
-        setAccessGranted(false);
-        setLogLines([]);
+        setTimelineStep(-1);
 
-        setError(result?.error || "Invalid credentials. Access denied.");
+        setError(
+          result?.error ||
+            "INVALID CREDENTIALS. ACCESS DENIED."
+        );
 
         return;
       }
 
-      addLog("DATABASE CREDENTIALS VERIFIED");
+      try {
+        localStorage.setItem(
+          "scc_officer_id",
+          normalizedOfficerId
+        );
 
-      addLog("OFFICER IDENTIFIER ACCEPTED");
+        localStorage.setItem(
+          "scc_username",
+          normalizedUsername
+        );
 
-      await new Promise((resolve) => {
-        requestAnimationFrame(resolve);
-      });
+        if (result.user?.role) {
+          localStorage.setItem(
+            "scc_role",
+            String(result.user.role)
+          );
+        }
 
-      await runAuthenticationSequence();
+        if (result.user?.officer_id) {
+          localStorage.setItem(
+            "scc_officer_id",
+            String(result.user.officer_id)
+          );
+        }
+      } catch {
+        // Browser storage is optional.
+      }
+
+      const elapsed =
+        performance.now() - authenticationStartedAt;
+
+      const remaining = Math.max(
+        0,
+        minimumAuthenticationMs - elapsed
+      );
+
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, remaining)
+      );
+
+      setTimelineStep(TIMELINE.length - 1);
+
+      playSuccessSound(audioContext);
+
+      try {
+        document.documentElement.style.backgroundColor =
+          "#0b1728";
+
+        document.body.style.backgroundColor = "#0b1728";
+      } catch {
+        // Visual transition protection is best-effort.
+      }
+
+      window.setTimeout(() => {
+        if (typeof authContext.completeLogin === "function") {
+          authContext.completeLogin();
+        }
+
+        window.location.href = "/cases";
+      }, 350);
     } catch (err) {
-      console.error("SCC authentication error:", err);
+      audioContext?.close().catch(() => {});
 
       setLoading(false);
-      setProgress(0);
-      setStageIndex(0);
-      setAccessGranted(false);
-      setLogLines([]);
+      setTimelineStep(-1);
 
-      setError(err?.message || "Authentication service unavailable.");
+      setError(
+        err?.response?.data?.detail ||
+          err?.response?.data?.message ||
+          err?.message ||
+          "AUTHENTICATION FAILED. ACCESS DENIED."
+      );
     }
   };
 
-  /*
-   * SECURE AUTHENTICATION TERMINAL
-   */
-  if (loading) {
-    const currentStage = AUTH_STAGES[stageIndex] || AUTH_STAGES[0];
-
-    return (
-      <div
-        className="min-h-screen bg-[#020813] flex items-center justify-center px-4 relative font-sans antialiased text-[#e7edf6]"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(20, 35, 60, 0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 35, 60, 0.4) 1px, transparent 1px)",
-          backgroundSize: "36px 36px",
-        }}
-      >
-        <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-[#030d1e]/40 to-[#020813]" />
-
-        <div className="w-full max-w-2xl relative z-10">
-          <div className="border border-[#142c4d] bg-[#071326]/90 rounded-sm shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)] backdrop-blur-md overflow-hidden">
-            {/* TERMINAL HEADER */}
-            <div className="border-b border-[#142c4d] px-5 py-4 flex items-center justify-between">
-              <div>
-                <p className="font-bold uppercase tracking-[0.18em] text-sm">
-                  State Crime Command
-                </p>
-
-                <p className="font-mono text-[9px] text-[#6f849f] uppercase tracking-[0.15em] mt-1">
-                  Secure Authentication Terminal
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-widest text-[#6f849f]">
-                <span className="h-2 w-2 rounded-full bg-[#d4b25a] animate-pulse" />
-                SECURE
-              </div>
-            </div>
-
-            {/* TERMINAL BODY */}
-            <div className="p-6 sm:p-8">
-              {/* AUTH STATUS */}
-              <div className="text-center mb-8">
-                {!accessGranted ? (
-                  <>
-                    <Loader2 className="h-8 w-8 text-[#d4b25a] animate-spin mx-auto mb-4" />
-
-                    <h1 className="text-xl font-bold uppercase tracking-[0.2em]">
-                      Authenticating...
-                    </h1>
-
-                    <p className="font-mono text-[10px] text-[#6f849f] uppercase tracking-[0.18em] mt-2">
-                      Please wait while your clearance is verified
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="h-10 w-10 text-[#d4b25a] mx-auto mb-4" />
-
-                    <h1 className="text-xl font-bold uppercase tracking-[0.2em] text-[#d4b25a]">
-                      Access Granted
-                    </h1>
-
-                    <p className="font-mono text-[10px] text-[#8ba0bd] uppercase tracking-[0.18em] mt-2">
-                      Secure command session authorised
-                    </p>
-                  </>
-                )}
-              </div>
-
-              {/* PROGRESS BAR */}
-              <div className="mb-6">
-                <div className="flex justify-between items-end mb-2 font-mono">
-                  <span className="text-[10px] text-[#6f849f] uppercase tracking-widest">
-                    Authentication Progress
-                  </span>
-
-                  <span className="text-sm font-bold text-[#d4b25a]">
-                    {String(progress).padStart(2, "0")}%
-                  </span>
-                </div>
-
-                <div className="h-2 bg-[#081222] border border-[#1c3557] overflow-hidden">
-                  <div
-                    className="h-full bg-[#d4b25a] transition-all duration-700 ease-out"
-                    style={{
-                      width: `${progress}%`,
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* CURRENT STAGE */}
-              {!accessGranted && (
-                <div className="border border-[#142c4d] bg-[#030b17] p-4 mb-6">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[10px] text-[#d4b25a]">
-                      {currentStage.code}
-                    </span>
-
-                    <span className="font-mono text-xs uppercase tracking-wider text-[#e7edf6]">
-                      {currentStage.text}
-                    </span>
-
-                    <span className="ml-auto">
-                      <Loader2 className="h-3.5 w-3.5 text-[#d4b25a] animate-spin" />
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* EVENT LOG */}
-              <div className="border border-[#142c4d] bg-[#030b17] p-4 h-48 overflow-hidden">
-                <div className="font-mono text-[10px] leading-6">
-                  <div className="text-[#6f849f] mb-1">
-                    // SCC AUTHENTICATION EVENT LOG
-                  </div>
-
-                  {logLines.map((line, index) => (
-                    <div
-                      key={`${line}-${index}`}
-                      className={
-                        line.includes("GRANTED") ||
-                        line.includes("COMPLETE") ||
-                        line.includes("VERIFIED") ||
-                        line.includes("ACCEPTED")
-                          ? "text-[#d4b25a]"
-                          : "text-[#8ba0bd]"
-                      }
-                    >
-                      {line}
-                    </div>
-                  ))}
-
-                  {!accessGranted && (
-                    <div className="text-[#d4b25a] animate-pulse">_</div>
-                  )}
-                </div>
-              </div>
-
-              {/* TERMINAL FOOTER */}
-              <div className="mt-6 flex items-center justify-between font-mono text-[9px] uppercase tracking-widest text-[#556a86]">
-                <span>NSWPF // SCC</span>
-                <span>RESTRICTED CLEARANCE</span>
-                <span>SYDNEY</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  /*
-   * LOGIN SCREEN
-   */
   return (
     <div
-      className="min-h-screen bg-[#020813] flex items-center justify-center px-4 py-10 relative font-sans antialiased text-[#e7edf6]"
+      className="min-h-screen bg-[#0b1728] flex items-center justify-center px-4 py-8 relative font-sans antialiased text-[#e7edf6] overflow-hidden"
       style={{
         backgroundImage:
-          "linear-gradient(rgba(20, 35, 60, 0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 35, 60, 0.4) 1px, transparent 1px)",
-        backgroundSize: "36px 36px",
+          "radial-gradient(circle at 50% 20%, rgba(212,178,90,0.07), transparent 30%), linear-gradient(rgba(35,53,78,0.22) 1px, transparent 1px), linear-gradient(90deg, rgba(35,53,78,0.22) 1px, transparent 1px)",
+        backgroundSize:
+          "auto, 36px 36px, 36px 36px",
       }}
     >
-      <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-[#030d1e]/40 to-[#020813]" />
+      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,transparent_25%,rgba(0,0,0,0.62)_100%)]" />
 
-      <div className="w-full max-w-md flex flex-col items-center relative z-10">
-        {/* BRANDING */}
-        <div className="mb-7 relative flex flex-col items-center w-full">
-          <div className="relative p-2 flex items-center justify-center mb-4">
-            <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-[#556a86]/40" />
-            <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-[#556a86]/40" />
-            <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-[#556a86]/40" />
-            <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-[#556a86]/40" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 h-px w-[70vw] bg-gradient-to-r from-transparent via-[#d4b25a]/30 to-transparent" />
 
-            <svg
-              className="h-16 w-16 drop-shadow-[0_0_15px_rgba(212,178,90,0.4)]"
-              viewBox="0 0 64 64"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                d="M32 2L39.5 18.5L57 20L44 32.5L47.5 50.5L32 41.5L16.5 50.5L20 32.5L7 20L24.5 18.5L32 2Z"
-                fill="#0b1b33"
-                stroke="#d4b25a"
-                strokeWidth="2"
-                strokeLinejoin="round"
-              />
+      <div className="w-full max-w-xl flex flex-col items-center relative z-10">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <TacticalCrest />
 
-              <circle
-                cx="32"
-                cy="27"
-                r="10"
-                stroke="#d4b25a"
-                strokeWidth="1.5"
-              />
-
-              <path
-                d="M32 21V33M26 27H38"
-                stroke="#d4b25a"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-          </div>
-
-          <h1 className="font-sans font-bold text-2xl text-center uppercase tracking-[0.14em] text-[#e7edf6] leading-none">
+          <h1 className="mt-3 text-2xl sm:text-3xl font-black uppercase tracking-[0.14em] text-[#f0f4fa]">
             State Crime Command
           </h1>
 
-          <p className="font-sans text-[10px] text-center font-bold uppercase tracking-[0.25em] text-[#8ba0bd] mt-2">
-            NSW Police Force
+          <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.3em] text-[#aab8cb]">
+            NSW Police Force · Case File Tracker
           </p>
 
-          <p className="font-mono text-[9px] text-center uppercase tracking-[0.15em] text-[#6f849f] mt-1.5">
-            Case File Tracker
-          </p>
-
-          <div className="mt-4 flex items-center justify-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-[#6f849f]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#e05656] animate-pulse" />
+          <div className="mt-4 flex items-center gap-2 text-[9px] font-mono uppercase tracking-[0.18em] text-[#647894]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#d4b25a] shadow-[0_0_10px_rgba(212,178,90,0.65)] animate-pulse" />
 
             <span>Secure Terminal</span>
 
-            <span className="text-[#33455f]">//</span>
+            <span className="text-[#344761]">//</span>
 
-            <span>Clearance: Restricted</span>
+            <span>Restricted Clearance</span>
 
-            <span className="text-[#33455f]">//</span>
+            <span className="text-[#344761]">//</span>
 
-            <span>Sector: Sydney</span>
+            <span>Sydney Sector</span>
           </div>
         </div>
 
-        {/* LOGIN FORM */}
         <form
           onSubmit={submit}
-          className="w-full bg-[#071326]/75 border border-[#142c4d] rounded-sm p-6 sm:p-8 space-y-5 relative shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85)] backdrop-blur-md"
+          className="w-full rounded-2xl border border-[#60718a]/25 bg-[#152b43]/78 p-5 sm:p-7 backdrop-blur-2xl shadow-[0_30px_90px_-30px_rgba(0,0,0,0.95)] relative overflow-hidden"
         >
-          <div className="absolute top-0 left-0 w-2.5 h-2.5 border-t-2 border-l-2 border-[#4f6785]" />
-          <div className="absolute top-0 right-0 w-2.5 h-2.5 border-t-2 border-r-2 border-[#4f6785]" />
-          <div className="absolute bottom-0 left-0 w-2.5 h-2.5 border-b-2 border-l-2 border-[#4f6785]" />
-          <div className="absolute bottom-0 right-0 w-2.5 h-2.5 border-b-2 border-r-2 border-[#4f6785]" />
+          <div className="absolute inset-[1px] rounded-[15px] border border-white/[0.035] pointer-events-none" />
 
-          <div className="text-center mb-1">
-            <p className="font-sans font-medium uppercase tracking-[0.2em] text-sm text-[#e7edf6]">
-              Restricted Access
-            </p>
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-px bg-gradient-to-r from-transparent via-[#d4b25a]/55 to-transparent" />
 
-            <div className="h-px w-16 bg-[#d4b25a]/50 mx-auto mt-3" />
-          </div>
+          <div className="relative space-y-5">
+            <div className="text-center pb-1">
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#d4b25a]/15 bg-[#d4b25a]/[0.04] px-3 py-1.5">
+                <KeyRound className="h-3.5 w-3.5 text-[#d4b25a]" />
 
-          {/* USERNAME */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] uppercase tracking-widest text-[#8ba0bd] block font-medium">
-              Username
-            </label>
+                <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#d8e0eb]">
+                  Restricted Access
+                </span>
+              </div>
 
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6f849f]" />
+              <p className="mt-2 text-[9px] font-mono uppercase tracking-[0.16em] text-[#61738b]">
+                Authorised operational personnel only
+              </p>
+            </div>
 
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => {
-                  setUsername(e.target.value);
+            <div className="space-y-2">
+              <label className="block text-[10px] font-bold uppercase tracking-[0.18em] text-[#8fa0b7]">
+                Username
+              </label>
 
-                  if (error) {
-                    setError("");
+              <div className="relative">
+                <User className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6e819b]" />
+
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(event) =>
+                    setUsername(event.target.value)
                   }
-                }}
-                placeholder="ENTER USERNAME"
-                autoComplete="username"
-                disabled={loading}
-                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors uppercase tracking-wider font-mono disabled:opacity-60"
-              />
+                  placeholder="ENTER USERNAME"
+                  autoComplete="username"
+                  disabled={loading}
+                  className="w-full rounded-xl border border-[#294766]/65 bg-[#f4f7fb] pl-11 pr-4 py-3.5 text-sm font-mono uppercase tracking-[0.12em] text-[#070e17] placeholder:text-[#65758a] caret-[#070e17] outline-none transition-all focus:border-[#d4b25a]/70 focus:ring-4 focus:ring-[#d4b25a]/[0.08] disabled:opacity-50"
+                  style={{ WebkitTextFillColor: "#070e17", caretColor: "#070e17" }}
+                />
+              </div>
             </div>
-          </div>
 
-          {/* ACCESS CODE */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] uppercase tracking-widest text-[#8ba0bd] block font-medium">
-              Access Code
-            </label>
+            <div className="space-y-2">
+              <label className="block text-[10px] font-bold uppercase tracking-[0.18em] text-[#8fa0b7]">
+                Access Code
+              </label>
 
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6f849f]" />
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6e819b]" />
 
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-
-                  if (error) {
-                    setError("");
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) =>
+                    setPassword(event.target.value)
                   }
-                }}
-                placeholder="ENTER ACCESS CODE"
-                autoComplete="current-password"
-                disabled={loading}
-                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors tracking-wider font-mono disabled:opacity-60"
-              />
+                  placeholder="ENTER ACCESS CODE"
+                  autoComplete="current-password"
+                  disabled={loading}
+                  className="w-full rounded-xl border border-[#294766]/65 bg-[#f4f7fb] pl-11 pr-4 py-3.5 text-sm font-mono tracking-[0.12em] text-[#070e17] placeholder:text-[#65758a] caret-[#070e17] outline-none transition-all focus:border-[#d4b25a]/70 focus:ring-4 focus:ring-[#d4b25a]/[0.08] disabled:opacity-50"
+                  style={{ WebkitTextFillColor: "#070e17", caretColor: "#070e17" }}
+                />
+              </div>
             </div>
-          </div>
 
-          {/* OFFICER ID / CALLSIGN */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] uppercase tracking-widest text-[#8ba0bd] block font-medium">
-              Officer ID / Callsign
-            </label>
+            <div className="space-y-2">
+              <label className="block text-[10px] font-bold uppercase tracking-[0.18em] text-[#8fa0b7]">
+                Officer ID / Callsign
+              </label>
 
-            <div className="relative">
-              <BadgeCheck className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6f849f]" />
+              <div className="relative">
+                <Radio className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6e819b]" />
 
-              <input
-                type="text"
-                value={officerId}
-                onChange={(e) => {
-                  setOfficerId(e.target.value);
-
-                  if (error) {
-                    setError("");
+                <input
+                  type="text"
+                  value={officerId}
+                  onChange={(event) =>
+                    setOfficerId(
+                      event.target.value.toUpperCase()
+                    )
                   }
-                }}
-                placeholder="ENTER OFFICER ID / CALLSIGN"
-                autoComplete="off"
-                disabled={loading}
-                className="w-full rounded-md bg-[#081222] border border-[#1c3557] pl-10 pr-3 py-2.5 text-sm text-[#e7edf6] placeholder:text-[#556a86] focus:outline-none focus:border-[#d4b25a]/70 transition-colors uppercase tracking-wider font-mono disabled:opacity-60"
-              />
+                  placeholder="ENTER OFFICER ID / CALLSIGN"
+                  autoComplete="off"
+                  disabled={loading}
+                  className="w-full rounded-xl border border-[#294766]/65 bg-[#f4f7fb] pl-11 pr-4 py-3.5 text-sm font-mono uppercase tracking-[0.1em] text-[#070e17] placeholder:text-[#65758a] caret-[#070e17] outline-none transition-all focus:border-[#d4b25a]/70 focus:ring-4 focus:ring-[#d4b25a]/[0.08] disabled:opacity-50"
+                  style={{ WebkitTextFillColor: "#070e17", caretColor: "#070e17" }}
+                />
+              </div>
+
+              <p className="pl-1 text-[8px] font-mono uppercase tracking-[0.14em] text-[#52647b]">
+                Operator identification for session auditing
+              </p>
             </div>
 
-            <p className="text-[9px] text-[#556a86] font-mono uppercase tracking-wider">
-              Operator identification for session auditing
-            </p>
-          </div>
+            {error && (
+              <div className="flex items-start gap-2.5 rounded-xl border border-[#8d3a45]/45 bg-[#3a1117]/35 px-3.5 py-3 text-xs text-[#f1aab1]">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
 
-          {/* ERROR */}
-          {error && (
-            <div className="flex items-center gap-2 rounded-md border border-[#7a2f2f] bg-[#2a1414] px-3 py-2 text-sm text-[#f4a6a6] font-mono">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
-
-              <span>{error}</span>
-            </div>
-          )}
-
-          {/* SUBMIT */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-2 rounded-md bg-[#d4b25a] hover:bg-[#f0d67a] disabled:opacity-60 text-[#0a1524] font-bold uppercase tracking-[0.15em] text-sm py-3 transition-colors cursor-pointer border border-[#d4b25a] shadow-lg"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ShieldCheck className="h-4 w-4" />
+                <span className="font-mono uppercase tracking-wide leading-relaxed">
+                  {error}
+                </span>
+              </div>
             )}
 
-            <span>{loading ? "Verifying clearance..." : "Access System"}</span>
-          </button>
+            {loading && (
+              <div className="rounded-xl border border-[#52647d]/20 bg-[#10243a]/62 px-4 py-3">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[9px] font-mono uppercase tracking-[0.16em] text-[#73869f]">
+                    Clearance Processing
+                  </span>
 
-          <p className="text-center text-[10px] text-[#556a86] leading-relaxed pt-1">
-            Authorised personnel only. All access to this terminal is logged and
-            monitored. Unauthorised entry is prohibited.
-          </p>
+                  <span className="text-[9px] font-mono text-[#d4b25a]">
+                    {Math.min(
+                      100,
+                      (timelineStep + 1) * 25
+                    )}
+                    %
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {TIMELINE.map((step, index) => {
+                    const complete = index < timelineStep;
+                    const active = index === timelineStep;
+
+                    return (
+                      <div
+                        key={step}
+                        className="flex items-center gap-2.5"
+                      >
+                        {complete ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-[#72d69b]" />
+                        ) : active ? (
+                          <Loader2 className="h-3.5 w-3.5 text-[#d4b25a] animate-spin" />
+                        ) : (
+                          <span className="h-3.5 w-3.5 rounded-full border border-[#344761]" />
+                        )}
+
+                        <span
+                          className={`text-[9px] font-mono uppercase tracking-[0.12em] ${
+                            complete
+                              ? "text-[#72d69b]"
+                              : active
+                                ? "text-[#d4b25a]"
+                                : "text-[#52647b]"
+                          }`}
+                        >
+                          {step}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-xl border border-[#e3c875]/70 bg-gradient-to-b from-[#e3c875] to-[#c59e40] text-[#06101b] py-3.5 text-xs font-black uppercase tracking-[0.2em] transition-all hover:brightness-110 hover:shadow-[0_0_28px_rgba(212,178,90,0.18)] disabled:opacity-55 disabled:cursor-not-allowed flex items-center justify-center gap-2.5"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Processing Clearance...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="h-4 w-4" />
+                  Access System
+                </>
+              )}
+            </button>
+
+            <div className="grid grid-cols-3 gap-2 text-center pt-1">
+              <div className="rounded-lg border border-[#52647d]/15 bg-[#07111e]/35 py-2">
+                <Activity className="h-3.5 w-3.5 mx-auto text-[#667a95]" />
+
+                <p className="mt-1 text-[7px] font-mono uppercase tracking-wider text-[#52647b]">
+                  Audit
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[#52647d]/15 bg-[#07111e]/35 py-2">
+                <ShieldCheck className="h-3.5 w-3.5 mx-auto text-[#667a95]" />
+
+                <p className="mt-1 text-[7px] font-mono uppercase tracking-wider text-[#52647b]">
+                  Secure
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[#52647d]/15 bg-[#07111e]/35 py-2">
+                <Radio className="h-3.5 w-3.5 mx-auto text-[#667a95]" />
+
+                <p className="mt-1 text-[7px] font-mono uppercase tracking-wider text-[#52647b]">
+                  Session
+                </p>
+              </div>
+            </div>
+
+            <p className="text-[8px] text-center text-[#4e6078] uppercase tracking-[0.12em] leading-relaxed">
+              Authorised personnel only. All access is logged and monitored.
+            </p>
+
+            <div className="border-t border-[#52647d]/15 pt-4 text-center">
+              <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-[#6a7d96]">
+                <span>{timeStr}</span>
+
+                <span className="mx-2 text-[#344761]">
+                  •
+                </span>
+
+                <span>{timezoneLabel}</span>
+
+                <span className="mx-2 text-[#344761]">
+                  •
+                </span>
+
+                <span>Sydney</span>
+              </div>
+
+              <div className="font-mono text-[8px] uppercase tracking-[0.1em] text-[#4e6078] mt-1">
+                {dateStr}
+              </div>
+            </div>
+          </div>
         </form>
 
-        {/* FOOTER */}
-        <div className="mt-6 w-full flex flex-col items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-[#556a86]">
-          <span>{dateStr}</span>
-
-          <span>{timeStr} AEST</span>
-
-          <span className="mt-1">SCC CASE FILE TRACKER</span>
-        </div>
+        <p className="mt-4 max-w-lg text-center text-[7px] leading-relaxed text-[#3e5067]">
+          Unofficial fan-made roleplay tool. Not affiliated with or endorsed by the New South Wales Police Force. Names, marks and insignia remain the property of their respective owners and are used here for non-commercial roleplay.
+        </p>
       </div>
     </div>
   );
