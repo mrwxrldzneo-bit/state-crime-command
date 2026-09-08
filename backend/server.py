@@ -1398,11 +1398,8 @@ async def notify_discord(case: dict):
     # Embed 2 — clean case alert details.
     case_alert_embed = {
         "color": case_embed_color,
-        "author": {
-            "name": "NSWPF · STATE CRIME COMMAND",
-            "icon_url": DISCORD_FOOTER_ICON_URL,
-        },
         "title": "CASE ALERT",
+        "description": "\u200b" * 80,
         "fields": [
             {
                 "name": "CASE ID",
