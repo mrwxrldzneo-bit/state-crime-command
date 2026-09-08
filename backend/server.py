@@ -1342,54 +1342,46 @@ async def notify_discord(case: dict):
         },
     }
 
-    # Embed 2 — dossier content only.
+    # Embed 2 — premium SCC dossier layout.
     dossier_embed = {
-        "title": "STATE CRIME COMMAND // CASE DOSSIER",
+        "color": 0x41597E,
+        "author": {
+            "name": "NSWPF · STATE CRIME COMMAND",
+            "icon_url": DISCORD_FOOTER_ICON_URL,
+        },
+        "title": "CASE DOSSIER",
+        "description": (
+            "```text\n"
+            f"CASE ID      {case.get('case_id', '—')}\n"
+            f"OPERATION    {case.get('name', 'Untitled Case')}\n"
+            f"LEAD         {case.get('lead_investigator', '—')}\n"
+            f"DIVISION     {case.get('division', '—')}\n"
+            f"PRIORITY     {priority_label.upper()}\n"
+            "```"
+        ),
         "fields": [
-            {
-                "name": "CASE ID",
-                "value": f"`{case.get('case_id', '—')}`",
-                "inline": True,
-            },
-            {
-                "name": "OPERATION NAME",
-                "value": case.get("name", "Untitled Case"),
-                "inline": True,
-            },
-            {
-                "name": "LEAD INVESTIGATOR",
-                "value": case.get("lead_investigator", "—"),
-                "inline": True,
-            },
-            {
-                "name": "DIVISION",
-                "value": case.get("division", "—"),
-                "inline": True,
-            },
-            {
-                "name": "PRIORITY",
-                "value": priority_label,
-                "inline": True,
-            },
             {
                 "name": "SYNOPSIS",
                 "value": synopsis[:1024],
                 "inline": False,
             },
+            {
+                "name": "\u200b",
+                "value": (
+                    "╭──────────────────────────────╮\n"
+                    "│  SCC SECURE CASE RECORD      │\n"
+                    "╰──────────────────────────────╯"
+                ),
+                "inline": False,
+            },
         ],
     }
 
-    # Embed 3 — full-width SCC footer artwork and timestamp.
+    # Embed 3 — footer artwork only, matching the banner presentation.
     system_base_embed = {
-        "description": "\u200b",
-        "color": 0x41597E,
         "image": {
             "url": CASE_FOOTER_IMAGE_URL,
         },
-        "footer": {
-            "text": "SCC Systems · Automated Case Alert",
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     payload = {
