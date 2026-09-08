@@ -223,6 +223,7 @@ async def execute_discord_webhook(
     *,
     thread_name: str = "",
     thread_id: str = "",
+    attachments: Optional[List[tuple]] = None,
 ):
     """Execute the configured webhook, supporting forum-thread creation."""
     if not DISCORD_WEBHOOK_URL:
@@ -245,7 +246,31 @@ async def execute_discord_webhook(
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=20) as hc:
-                response = await hc.post(url, json=payload)
+                if attachments:
+                    files = {
+                        f"files[{index}]": (
+                            filename,
+                            file_bytes,
+                            content_type,
+                        )
+                        for index, (
+                            filename,
+                            file_bytes,
+                            content_type,
+                        ) in enumerate(attachments)
+                    }
+                    response = await hc.post(
+                        url,
+                        data={
+                            "payload_json": json.dumps(payload)
+                        },
+                        files=files,
+                    )
+                else:
+                    response = await hc.post(
+                        url,
+                        json=payload,
+                    )
 
             if response.is_success:
                 try:
@@ -266,10 +291,31 @@ async def execute_discord_webhook(
                 )
 
                 async with httpx.AsyncClient(timeout=20) as hc:
-                    fallback = await hc.post(
-                        fallback_url,
-                        json=payload,
-                    )
+                    if attachments:
+                        files = {
+                            f"files[{index}]": (
+                                filename,
+                                file_bytes,
+                                content_type,
+                            )
+                            for index, (
+                                filename,
+                                file_bytes,
+                                content_type,
+                            ) in enumerate(attachments)
+                        }
+                        fallback = await hc.post(
+                            fallback_url,
+                            data={
+                                "payload_json": json.dumps(payload)
+                            },
+                            files=files,
+                        )
+                    else:
+                        fallback = await hc.post(
+                            fallback_url,
+                            json=payload,
+                        )
 
                 if fallback.is_success:
                     try:
@@ -1397,10 +1443,12 @@ async def notify_discord(case: dict):
     }
 
     # Embed 3 — full-width footer artwork only.
+    # The image is uploaded directly to Discord as an attachment so Discord
+    # does not have to hotlink/fetch the Postimg URL itself.
     footer_embed = {
         "color": case_embed_color,
         "image": {
-            "url": CASE_FOOTER_IMAGE_URL,
+            "url": "attachment://scc-case-footer.png",
         },
     }
 
@@ -1421,9 +1469,53 @@ async def notify_discord(case: dict):
         f"{case.get('name', 'Case File')}"
     )[:100]
 
+    footer_attachments = []
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as hc:
+            footer_response = await hc.get(
+                CASE_FOOTER_IMAGE_URL,
+                follow_redirects=True,
+            )
+
+        if footer_response.is_success and footer_response.content:
+            footer_content_type = (
+                footer_response.headers.get(
+                    "content-type",
+                    "image/png",
+                )
+                .split(";")[0]
+                .strip()
+                or "image/png"
+            )
+
+            footer_attachments.append(
+                (
+                    "scc-case-footer.png",
+                    footer_response.content,
+                    footer_content_type,
+                )
+            )
+        else:
+            logger.warning(
+                "SCC footer image fetch failed: HTTP %s",
+                footer_response.status_code,
+            )
+    except Exception as exc:
+        logger.warning(
+            "SCC footer image fetch failed: %s",
+            exc,
+        )
+
+    # If the attachment fetch failed, fall back to the remote URL rather
+    # than sending a dead attachment:// reference.
+    if not footer_attachments:
+        footer_embed["image"]["url"] = CASE_FOOTER_IMAGE_URL
+
     data = await execute_discord_webhook(
         payload,
         thread_name=thread_name,
+        attachments=footer_attachments or None,
     )
 
     if data is None:
