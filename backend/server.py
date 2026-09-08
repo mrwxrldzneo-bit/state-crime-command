@@ -1335,50 +1335,70 @@ async def notify_discord(case: dict):
 
     synopsis = (case.get("synopsis") or "").strip() or "No synopsis recorded."
 
-    # Embed 1 — top operational banner image only.
+    # All three embeds use the case priority colour.
+    case_embed_color = PRIORITY_COLORS.get(
+        priority,
+        PRIORITY_COLORS["routine"],
+    )
+
+    # Embed 1 — full-width New Case banner.
     banner_embed = {
+        "color": case_embed_color,
         "image": {
             "url": CASE_BANNER_URL,
         },
     }
 
-    # Embed 2 — premium SCC dossier layout.
-    dossier_embed = {
-        "color": 0x41597E,
+    # Embed 2 — clean case alert details.
+    case_alert_embed = {
+        "color": case_embed_color,
         "author": {
             "name": "NSWPF · STATE CRIME COMMAND",
             "icon_url": DISCORD_FOOTER_ICON_URL,
         },
-        "title": "CASE DOSSIER",
-        "description": (
-            "```text\n"
-            f"CASE ID      {case.get('case_id', '—')}\n"
-            f"OPERATION    {case.get('name', 'Untitled Case')}\n"
-            f"LEAD         {case.get('lead_investigator', '—')}\n"
-            f"DIVISION     {case.get('division', '—')}\n"
-            f"PRIORITY     {priority_label.upper()}\n"
-            "```"
-        ),
+        "title": "CASE ALERT",
         "fields": [
+            {
+                "name": "CASE ID",
+                "value": f"`{case.get('case_id', '—')}`",
+                "inline": True,
+            },
+            {
+                "name": "OPERATION",
+                "value": case.get("name", "Untitled Case"),
+                "inline": True,
+            },
+            {
+                "name": "PRIORITY",
+                "value": priority_label.upper(),
+                "inline": True,
+            },
+            {
+                "name": "LEAD INVESTIGATOR",
+                "value": case.get("lead_investigator", "—"),
+                "inline": True,
+            },
+            {
+                "name": "DIVISION",
+                "value": case.get("division", "—"),
+                "inline": True,
+            },
+            {
+                "name": "STATUS",
+                "value": str(case.get("status") or "pending").upper(),
+                "inline": True,
+            },
             {
                 "name": "SYNOPSIS",
                 "value": synopsis[:1024],
                 "inline": False,
             },
-            {
-                "name": "\u200b",
-                "value": (
-                    "╭──────────────────────────────╮\n"
-                    "│  SCC SECURE CASE RECORD      │\n"
-                    "╰──────────────────────────────╯"
-                ),
-                "inline": False,
-            },
         ],
     }
 
-    # Embed 3 — footer artwork only, matching the banner presentation.
-    system_base_embed = {
+    # Embed 3 — full-width footer artwork only.
+    footer_embed = {
+        "color": case_embed_color,
         "image": {
             "url": CASE_FOOTER_IMAGE_URL,
         },
@@ -1388,8 +1408,8 @@ async def notify_discord(case: dict):
         "content": mentions,
         "embeds": [
             banner_embed,
-            dossier_embed,
-            system_base_embed,
+            case_alert_embed,
+            footer_embed,
         ],
         "allowed_mentions": {
             "parse": ["everyone"],
