@@ -586,7 +586,13 @@ function HeaderClock() {
 
 
 
-function FullSupportWaiting({ caseId, onClose }) {
+function FullSupportWaiting({
+  caseId,
+  onClose,
+  onEnd,
+  ending,
+  countdown,
+}) {
   return (
     <div className="h-full min-h-0 flex flex-col bg-[#081321]/96">
       <div className="flex items-center justify-between px-5 py-4">
@@ -599,14 +605,29 @@ function FullSupportWaiting({ caseId, onClose }) {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-2 rounded-xl text-[#7186a0] hover:text-white hover:bg-[#142a42]/80"
-          title="Hide Live Support"
-        >
-          <X className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onEnd}
+            disabled={ending}
+            className="px-3 py-2 rounded-xl border border-[#6b2929] bg-[#2a1414]/70 text-[9px] font-mono uppercase tracking-wider text-[#f08080] hover:bg-[#391919] disabled:opacity-50"
+          >
+            {countdown !== null
+              ? `Ending ${countdown}`
+              : ending
+                ? "Ending..."
+                : "End Chat"}
+          </button>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-xl text-[#7186a0] hover:text-white hover:bg-[#142a42]/80"
+            title="Hide Live Support"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center px-8">
@@ -1553,6 +1574,64 @@ export default function Dashboard() {
     // Closing the panel only hides it. The case-linked support session remains active.
     setIsChatOpen(false);
     setChatInput("");
+  };
+
+  const handleEndWaitingSupport = async () => {
+    if (!chatCase || endingSupport) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `End the Live Support session for ${chatCase.case_id}?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const caseKey =
+      chatCase?.backend_id ||
+      chatCase?.id ||
+      chatCase?.case_id;
+
+    try {
+      setEndingSupport(true);
+
+      const response = await sccRemoteRequest(
+        "POST",
+        `/cases/${caseKey}/help/end`,
+        {},
+        30000
+      );
+
+      const endingAt =
+        response?.data?.ending_at ||
+        response?.data?.case?.help_ending_at ||
+        "";
+
+      setSupportEndingAt(endingAt);
+      setChatSessionActive(true);
+
+      updateCases((currentCases) =>
+        currentCases.map((item) =>
+          item.id === chatCase.id ||
+          item.case_id === chatCase.case_id
+            ? {
+                ...item,
+                ...(response?.data?.case || {}),
+                help_session_active: true,
+                help_discord_status: "ending",
+                help_ending_at: endingAt,
+              }
+            : item
+        )
+      );
+    } catch (error) {
+      setEndingSupport(false);
+      setChatError(
+        error?.response?.data?.detail ||
+        "Live Support could not be ended."
+      );
+    }
   };
 
   const handleEndSupportChat = async () => {
@@ -2721,6 +2800,9 @@ export default function Dashboard() {
               <FullSupportWaiting
                 caseId={chatCase.case_id}
                 onClose={closeHelpChat}
+                onEnd={handleEndWaitingSupport}
+                ending={endingSupport}
+                countdown={supportEndCountdown}
               />
             ) : (
               <>

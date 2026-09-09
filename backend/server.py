@@ -2863,6 +2863,89 @@ async def discord_interactions(
     )
     author_id = str(discord_user.get("id") or "").strip()
 
+    # Guild slash commands: /reply and /end.
+    if interaction_type == 2:
+        command_name = str(
+            data.get("name") or ""
+        ).lower().strip()
+
+        channel_id = str(
+            payload.get("channel_id") or ""
+        ).strip()
+
+        case = await get_active_support_case_by_discord_channel(
+            channel_id
+        )
+
+        if not case:
+            return {
+                "type": 4,
+                "data": {
+                    "content": (
+                        "This command only works inside an active SCC support thread."
+                    ),
+                    "flags": 64,
+                },
+            }
+
+        session_id = str(
+            case.get("help_session_id") or ""
+        ).strip()
+
+        if command_name == "reply":
+            return {
+                "type": 9,
+                "data": {
+                    "custom_id": (
+                        f"scc_support_slash_reply_modal:{session_id}"
+                    ),
+                    "title": "SCC Live Support Reply",
+                    "components": [
+                        {
+                            "type": 1,
+                            "components": [
+                                {
+                                    "type": 4,
+                                    "custom_id": "reply_text",
+                                    "label": "Reply",
+                                    "style": 2,
+                                    "min_length": 1,
+                                    "max_length": 1800,
+                                    "required": True,
+                                    "placeholder": "Type your reply...",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            }
+
+        if command_name == "end":
+            background_tasks.add_task(
+                end_support_from_discord_interaction,
+                session_id,
+                author_name,
+            )
+
+            return {
+                "type": 4,
+                "data": {
+                    "content": (
+                        "Live Support is ending. "
+                        "The session will close in 5 seconds."
+                    ),
+                    "flags": 64,
+                },
+            }
+
+        return {
+            "type": 4,
+            "data": {
+                "content": "Unsupported SCC command.",
+                "flags": 64,
+            },
+        }
+
     if (
         interaction_type == 3
         and custom_id.startswith("scc_support_reply:")
@@ -2916,7 +2999,10 @@ async def discord_interactions(
 
     if (
         interaction_type == 5
-        and custom_id.startswith("scc_support_reply_modal:")
+        and (
+            custom_id.startswith("scc_support_reply_modal:")
+            or custom_id.startswith("scc_support_slash_reply_modal:")
+        )
     ):
         session_id = custom_id.split(":", 1)[1].strip()
         reply_text = ""
@@ -2961,6 +3047,77 @@ async def discord_interactions(
             "content": "Unsupported SCC interaction.",
             "flags": 64,
         },
+    }
+
+
+
+@api_router.post("/cases/{case_uid}/help/end")
+async def end_help_session(
+    case_uid: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    case = await db.cases.find_one(
+        {
+            "$or": [
+                {"id": case_uid},
+                {"case_id": case_uid},
+            ]
+        },
+        {"_id": 0},
+    )
+
+    if not case or not case.get("help_session_id"):
+        raise HTTPException(
+            status_code=404,
+            detail="No live support session exists for this case.",
+        )
+
+    if not case.get("help_session_active"):
+        raise HTTPException(
+            status_code=409,
+            detail="Live support session is already closed.",
+        )
+
+    existing_ending_at = str(
+        case.get("help_ending_at") or ""
+    ).strip()
+
+    if existing_ending_at:
+        return {
+            "message": "Live support is already ending.",
+            "case": case,
+            "ending_at": existing_ending_at,
+            "countdown_seconds": 5,
+        }
+
+    ended_by = str(
+        user.get("username") or "OPERATOR"
+    ).strip()
+
+    ending_at = await begin_support_end(
+        case,
+        ended_by,
+    )
+
+    background_tasks.add_task(
+        finalize_support_end,
+        case["id"],
+        case["help_session_id"],
+        ended_by,
+        ending_at,
+    )
+
+    updated = await db.cases.find_one(
+        {"id": case["id"]},
+        {"_id": 0},
+    )
+
+    return {
+        "message": "Live support ending in 5 seconds.",
+        "case": updated,
+        "ending_at": ending_at,
+        "countdown_seconds": 5,
     }
 
 
@@ -3313,9 +3470,111 @@ async def seed_cases():
 # Startup / shutdown
 # ---------------------------------------------------------------------------
 
+
+async def register_discord_slash_commands():
+    """
+    Register the two simple guild slash commands used by SCC Live Support.
+
+    /reply -> opens a reply modal inside an active SCC support thread.
+    /end   -> starts the same 5-second ending flow as End Support.
+    """
+    if not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
+        logger.warning(
+            "Discord slash commands were not registered because the bot token "
+            "or guild ID is missing."
+        )
+        return
+
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=12) as hc:
+            app_response = await hc.get(
+                "https://discord.com/api/v10/oauth2/applications/@me",
+                headers=headers,
+            )
+
+        if not app_response.is_success:
+            logger.warning(
+                "Discord application lookup failed: HTTP %s — %s",
+                app_response.status_code,
+                app_response.text[:300],
+            )
+            return
+
+        application_id = str(
+            app_response.json().get("id") or ""
+        ).strip()
+
+        if not application_id:
+            logger.warning(
+                "Discord application lookup returned no application ID."
+            )
+            return
+
+        commands = [
+            {
+                "name": "reply",
+                "description": "Reply to this SCC support chat",
+                "type": 1,
+            },
+            {
+                "name": "end",
+                "description": "End this SCC support chat",
+                "type": 1,
+            },
+        ]
+
+        async with httpx.AsyncClient(timeout=12) as hc:
+            response = await hc.put(
+                (
+                    "https://discord.com/api/v10/applications/"
+                    f"{application_id}/guilds/{DISCORD_GUILD_ID}/commands"
+                ),
+                json=commands,
+                headers=headers,
+            )
+
+        if response.is_success:
+            logger.info(
+                "Discord SCC slash commands registered: /reply, /end"
+            )
+        else:
+            logger.warning(
+                "Discord slash command registration failed: HTTP %s — %s",
+                response.status_code,
+                response.text[:400],
+            )
+    except Exception as exc:
+        logger.warning(
+            "Discord slash command registration failed: %s",
+            exc,
+        )
+
+
+async def get_active_support_case_by_discord_channel(
+    channel_id: str,
+):
+    channel_id = str(channel_id or "").strip()
+
+    if not channel_id:
+        return None
+
+    return await db.cases.find_one(
+        {
+            "help_discord_channel_id": channel_id,
+            "help_session_active": True,
+        },
+        {"_id": 0},
+    )
+
+
 @app.on_event("startup")
 async def startup():
-    pass
+    await register_discord_slash_commands()
 
 
 app.include_router(
