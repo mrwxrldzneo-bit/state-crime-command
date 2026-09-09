@@ -466,10 +466,6 @@ def build_support_control_payload(
         "color": color,
         "fields": fields,
         "thumbnail": {"url": DISCORD_FOOTER_ICON_URL},
-        "footer": {
-            "text": "SCC Systems · Case-linked Live Support",
-            "icon_url": DISCORD_FOOTER_ICON_URL,
-        },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1460,7 +1456,8 @@ async def notify_discord(case: dict):
         },
     }
 
-    # Embed 2 — clean case alert details.
+    # Embed 2 — clean case alert details with the footer artwork
+    # attached at the bottom of this same embed.
     case_alert_embed = {
         "color": case_embed_color,
         "title": "CASE ALERT",
@@ -1502,13 +1499,6 @@ async def notify_discord(case: dict):
                 "inline": False,
             },
         ],
-    }
-
-    # Embed 3 — full-width footer artwork only.
-    # The image is uploaded directly to Discord as an attachment so Discord
-    # does not have to hotlink/fetch the Postimg URL itself.
-    footer_embed = {
-        "color": case_embed_color,
         "image": {
             "url": "attachment://scc-case-footer.png",
         },
@@ -1519,7 +1509,6 @@ async def notify_discord(case: dict):
         "embeds": [
             banner_embed,
             case_alert_embed,
-            footer_embed,
         ],
         "allowed_mentions": {
             "parse": ["everyone"],

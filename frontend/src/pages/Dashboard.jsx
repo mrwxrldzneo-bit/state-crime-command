@@ -584,6 +584,27 @@ function HeaderClock() {
   );
 }
 
+
+function WaitingForSupport() {
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      <span className="relative flex h-2.5 w-2.5">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#d4b25a] opacity-50" />
+        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#d4b25a]" />
+      </span>
+
+      <span className="relative overflow-hidden text-[10px] font-mono uppercase tracking-[0.18em] text-[#9aabc0]">
+        <span className="animate-pulse">
+          Waiting for support
+        </span>
+        <span className="ml-0.5 inline-flex w-5">
+          <span className="animate-pulse">...</span>
+        </span>
+      </span>
+    </div>
+  );
+}
+
 function EmptyState() {
   return (
     <div className="px-6 py-14 text-center">
@@ -1808,9 +1829,9 @@ export default function Dashboard() {
 
       setChatError("");
     } catch (error) {
-      setChatError(
-        error?.response?.data?.detail ||
-        "Message is saved in the website chat, but Discord delivery is currently unavailable."
+      console.warn(
+        "Discord support delivery is temporarily unavailable:",
+        error
       );
     }
   };
@@ -2712,33 +2733,10 @@ export default function Dashboard() {
                 .
               </p>
 
-              {chatDiscordUrl ? (
-                <a
-                  href={chatDiscordUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-2 inline-flex items-center gap-2 text-[10px] font-bold text-[#d4b25a] hover:text-[#ead58a]"
-                >
-                  💬 OPEN DISCORD SUPPORT THREAD
-                </a>
-              ) : (
-                <span className="mt-2 inline-flex items-center gap-2 text-[10px] font-bold text-[#7186a0]">
-                  💬 CONNECTING DISCORD SUPPORT THREAD...
-                </span>
-              )}
-
-              <p className="mt-2 text-[9px] font-mono uppercase tracking-wider text-[#607793]">
-                {helpSent
-                  ? "Discord support connected"
-                  : chatSessionActive
-                    ? "Local channel active"
-                    : "Support session ended"}
-              </p>
-
-              {chatError && (
-                <p className="mt-2 text-[10px] text-[#f08080]">
-                  {chatError}
-                </p>
+              {chatSessionActive && !chatMessages.some(
+                (message) => message?.source === "discord"
+              ) && (
+                <WaitingForSupport />
               )}
             </div>
 
