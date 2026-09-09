@@ -3701,7 +3701,7 @@ async def get_active_support_case_by_discord_channel(
 # Discord Gateway bot
 # ---------------------------------------------------------------------------
 
-discord_intents = discord.Intents.none()
+discord_intents = discord.Intents.default()
 discord_gateway_client = discord.Client(
     intents=discord_intents,
 )
@@ -3850,7 +3850,8 @@ if SCC_DISCORD_GUILD is not None:
     )
 
 
-async def gateway_component_interaction(
+@discord_gateway_client.event
+async def on_interaction(
     interaction: discord.Interaction,
 ):
     if interaction.type != discord.InteractionType.component:
@@ -3893,12 +3894,6 @@ async def gateway_component_interaction(
             "Live Support is ending.",
             ephemeral=True,
         )
-
-
-discord_gateway_client.add_listener(
-    gateway_component_interaction,
-    "on_interaction",
-)
 
 
 @discord_gateway_client.event
