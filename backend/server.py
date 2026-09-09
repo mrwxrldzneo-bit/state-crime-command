@@ -2810,10 +2810,12 @@ async def clear_help_session(
 async def discord_interactions_status():
     return {
         "enabled": bool(DISCORD_PUBLIC_KEY),
-        "public_key_configured": bool(DISCORD_PUBLIC_KEY),
+        "public_key_ready": bool(DISCORD_PUBLIC_KEY),
         "bot_token_configured": bool(DISCORD_BOT_TOKEN),
         "support_channel_configured": bool(DISCORD_SUPPORT_CHANNEL_ID),
         "endpoint": "/api/discord/interactions",
+        "root_alias": "/discord/interactions",
+        "commands": ["/reply", "/end"],
     }
 
 
@@ -2864,6 +2866,8 @@ async def discord_interactions(
     author_id = str(discord_user.get("id") or "").strip()
 
     # Guild slash commands: /reply and /end.
+    # Discord requires the initial response within roughly three seconds,
+    # so do not wait for MongoDB before acknowledging the command.
     if interaction_type == 2:
         command_name = str(
             data.get("name") or ""
@@ -2873,31 +2877,12 @@ async def discord_interactions(
             payload.get("channel_id") or ""
         ).strip()
 
-        case = await get_active_support_case_by_discord_channel(
-            channel_id
-        )
-
-        if not case:
-            return {
-                "type": 4,
-                "data": {
-                    "content": (
-                        "This command only works inside an active SCC support thread."
-                    ),
-                    "flags": 64,
-                },
-            }
-
-        session_id = str(
-            case.get("help_session_id") or ""
-        ).strip()
-
         if command_name == "reply":
             return {
                 "type": 9,
                 "data": {
                     "custom_id": (
-                        f"scc_support_slash_reply_modal:{session_id}"
+                        f"scc_support_slash_reply_channel:{channel_id}"
                     ),
                     "title": "SCC Live Support Reply",
                     "components": [
@@ -2922,8 +2907,8 @@ async def discord_interactions(
 
         if command_name == "end":
             background_tasks.add_task(
-                end_support_from_discord_interaction,
-                session_id,
+                end_support_from_discord_channel,
+                channel_id,
                 author_name,
             )
 
@@ -3002,9 +2987,10 @@ async def discord_interactions(
         and (
             custom_id.startswith("scc_support_reply_modal:")
             or custom_id.startswith("scc_support_slash_reply_modal:")
+            or custom_id.startswith("scc_support_slash_reply_channel:")
         )
     ):
-        session_id = custom_id.split(":", 1)[1].strip()
+        reply_target = custom_id.split(":", 1)[1].strip()
         reply_text = ""
 
         for row in data.get("components") or []:
@@ -3025,13 +3011,24 @@ async def discord_interactions(
 
         # Acknowledge the modal immediately, then post to the case thread
         # and save to Mongo in the background.
-        background_tasks.add_task(
-            reply_from_discord_interaction,
-            session_id,
-            author_name,
-            author_id,
-            reply_text,
-        )
+        if custom_id.startswith(
+            "scc_support_slash_reply_channel:"
+        ):
+            background_tasks.add_task(
+                reply_from_discord_channel,
+                reply_target,
+                author_name,
+                author_id,
+                reply_text,
+            )
+        else:
+            background_tasks.add_task(
+                reply_from_discord_interaction,
+                reply_target,
+                author_name,
+                author_id,
+                reply_text,
+            )
 
         return {
             "type": 4,
@@ -3471,6 +3468,126 @@ async def seed_cases():
 # ---------------------------------------------------------------------------
 
 
+
+async def ensure_discord_public_key():
+    """
+    Resolve the interaction verification key from the Discord application
+    attached to DISCORD_BOT_TOKEN.
+
+    This removes the easy-to-miss requirement to manually copy the public
+    key into Render, while still accepting DISCORD_PUBLIC_KEY when supplied.
+    """
+    global DISCORD_PUBLIC_KEY
+
+    if DISCORD_PUBLIC_KEY:
+        return DISCORD_PUBLIC_KEY
+
+    if not DISCORD_BOT_TOKEN:
+        logger.warning(
+            "Discord public key could not be resolved because "
+            "DISCORD_BOT_TOKEN is missing."
+        )
+        return ""
+
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            response = await hc.get(
+                "https://discord.com/api/v10/oauth2/applications/@me",
+                headers=headers,
+            )
+
+        if not response.is_success:
+            logger.warning(
+                "Discord public-key lookup failed: HTTP %s — %s",
+                response.status_code,
+                response.text[:300],
+            )
+            return ""
+
+        application = response.json()
+
+        resolved_key = str(
+            application.get("verify_key") or ""
+        ).strip()
+
+        if resolved_key:
+            DISCORD_PUBLIC_KEY = resolved_key
+            logger.info(
+                "Discord interaction public key resolved automatically."
+            )
+            return DISCORD_PUBLIC_KEY
+
+        logger.warning(
+            "Discord application response contained no verify_key."
+        )
+    except Exception as exc:
+        logger.warning(
+            "Discord public-key lookup failed: %s",
+            exc,
+        )
+
+    return ""
+
+
+async def end_support_from_discord_channel(
+    channel_id: str,
+    ended_by: str,
+):
+    case = await get_active_support_case_by_discord_channel(
+        channel_id
+    )
+
+    if not case:
+        logger.info(
+            "Discord /end ignored because channel %s is not linked "
+            "to an active SCC support session.",
+            channel_id,
+        )
+        return
+
+    await end_support_from_discord_interaction(
+        str(case.get("help_session_id") or ""),
+        ended_by,
+    )
+
+
+async def reply_from_discord_channel(
+    channel_id: str,
+    author_name: str,
+    author_id: str,
+    reply_text: str,
+):
+    case = await get_active_support_case_by_discord_channel(
+        channel_id
+    )
+
+    if not case:
+        logger.info(
+            "Discord /reply ignored because channel %s is not linked "
+            "to an active SCC support session.",
+            channel_id,
+        )
+        return
+
+    session_id = str(
+        case.get("help_session_id") or ""
+    ).strip()
+
+    if not session_id:
+        return
+
+    await reply_from_discord_interaction(
+        session_id,
+        author_name,
+        author_id,
+        reply_text,
+    )
+
+
 async def register_discord_slash_commands():
     """
     Register the two simple guild slash commands used by SCC Live Support.
@@ -3574,6 +3691,7 @@ async def get_active_support_case_by_discord_channel(
 
 @app.on_event("startup")
 async def startup():
+    await ensure_discord_public_key()
     await register_discord_slash_commands()
 
 
