@@ -11,6 +11,8 @@ import api from "../lib/api";
 
 import {
   AlertTriangle,
+  Bell,
+  BrainCircuit,
   Archive,
   CheckCircle2,
   Clock3,
@@ -23,8 +25,14 @@ import {
   History,
   LogOut,
   MessageCircle,
+  Mic,
   Radio,
   Search,
+  Play,
+  Square,
+  Target,
+  ListTodo,
+  Lightbulb,
   Send,
   Shield,
   Trash2,
@@ -870,6 +878,46 @@ export default function Dashboard() {
   const [commandNote, setCommandNote] = useState("");
   const [closureSummary, setClosureSummary] = useState("");
 
+  // SCC investigation intelligence
+  const [gapQuestion, setGapQuestion] = useState("");
+  const [gapDetail, setGapDetail] = useState("");
+  const [leadTitle, setLeadTitle] = useState("");
+  const [leadDetail, setLeadDetail] = useState("");
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskAssignee, setTaskAssignee] = useState("");
+  const [taskDue, setTaskDue] = useState("");
+  const [followUpRecommendations, setFollowUpRecommendations] = useState([]);
+  const [aiBusy, setAiBusy] = useState(false);
+
+  // SCC Interview Director / Live Copilot
+  const [interviewSubject, setInterviewSubject] = useState("");
+  const [interviewType, setInterviewType] = useState("Suspect / Person of Interest");
+  const [interviewOfficerRank, setInterviewOfficerRank] = useState(() => localStorage.getItem("scc_interview_rank") || "Detective");
+  const [interviewOfficerName, setInterviewOfficerName] = useState(() => localStorage.getItem("scc_interview_name") || operatorName);
+  const [secondOfficerPresent, setSecondOfficerPresent] = useState(false);
+  const [secondOfficerRank, setSecondOfficerRank] = useState("");
+  const [secondOfficerName, setSecondOfficerName] = useState("");
+  const [interviewCircumstance, setInterviewCircumstance] = useState("");
+  const [activeInterview, setActiveInterview] = useState(null);
+  const [interviewTranscript, setInterviewTranscript] = useState("");
+  const [liveInterviewAnalysis, setLiveInterviewAnalysis] = useState(null);
+  const [interviewAssessment, setInterviewAssessment] = useState(null);
+  const [isInterviewRecording, setIsInterviewRecording] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const recordingChunksRef = useRef([]);
+  const speechRecognitionRef = useRef(null);
+  const liveTranscriptRef = useRef("");
+
+  // Command operation planner
+  const [operationType, setOperationType] = useState("Surveillance");
+  const [operationInstructions, setOperationInstructions] = useState("");
+  const [operationObjective, setOperationObjective] = useState("");
+  const [operationBusy, setOperationBusy] = useState(false);
+
+  // Persistent notifications
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editCase, setEditCase] = useState(null);
   const [editName, setEditName] = useState("");
@@ -899,6 +947,21 @@ export default function Dashboard() {
 
   const seenDiscordMessageIdsRef = useRef(new Set());
   const supportConnectPromiseRef = useRef(null);
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const response = await api.get("/notifications");
+      setNotifications(Array.isArray(response?.data) ? response.data : []);
+    } catch {
+      // Notification polling is non-blocking.
+    }
+  }, []);
+
+  useEffect(() => {
+    loadNotifications();
+    const timer = window.setInterval(loadNotifications, 30000);
+    return () => window.clearInterval(timer);
+  }, [loadNotifications]);
 
   const updateCases = useCallback((updater) => {
     setCases((currentCases) => {
@@ -1404,6 +1467,173 @@ export default function Dashboard() {
 
   const decideClosure = async (decision) => {
     await workspacePost(`/cases/${getCaseKey(selectedCase)}/closure-request/${decision}`, {});
+  };
+
+  const createInformationGap = async () => {
+    if (!gapQuestion.trim()) return setWorkspaceError("Information gap question is required.");
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/gaps`, { question: gapQuestion, detail: gapDetail, priority: "medium" });
+    if (updated) { setGapQuestion(""); setGapDetail(""); }
+  };
+
+  const updateInformationGap = async (gapId, status) => {
+    setWorkspaceBusy(true); setWorkspaceError("");
+    try {
+      const response = await sccRemoteRequest("PUT", `/cases/${getCaseKey(selectedCase)}/gaps/${gapId}`, { status });
+      applyWorkspaceCase(response?.data);
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to update information gap."); }
+    finally { setWorkspaceBusy(false); }
+  };
+
+  const createLead = async () => {
+    if (!leadTitle.trim()) return setWorkspaceError("Lead title is required.");
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/leads`, { title: leadTitle, detail: leadDetail, priority: "medium" });
+    if (updated) { setLeadTitle(""); setLeadDetail(""); }
+  };
+
+  const updateLeadStatus = async (leadId, status) => {
+    setWorkspaceBusy(true); setWorkspaceError("");
+    try { const response = await sccRemoteRequest("PUT", `/cases/${getCaseKey(selectedCase)}/leads/${leadId}`, { status }); applyWorkspaceCase(response?.data); }
+    catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to update lead."); }
+    finally { setWorkspaceBusy(false); }
+  };
+
+  const createTask = async () => {
+    if (!taskTitle.trim()) return setWorkspaceError("Task title is required.");
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/tasks`, { title: taskTitle, assigned_to: taskAssignee, due_at: taskDue, priority: "routine" });
+    if (updated) { setTaskTitle(""); setTaskAssignee(""); setTaskDue(""); loadNotifications(); }
+  };
+
+  const updateTaskStatus = async (taskId, status) => {
+    setWorkspaceBusy(true); setWorkspaceError("");
+    try { const response = await sccRemoteRequest("PUT", `/cases/${getCaseKey(selectedCase)}/tasks/${taskId}`, { status }); applyWorkspaceCase(response?.data); }
+    catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to update task."); }
+    finally { setWorkspaceBusy(false); }
+  };
+
+  const getNextActions = async (trigger = "manual") => {
+    if (!selectedCase) return;
+    setAiBusy(true); setWorkspaceError("");
+    try {
+      const response = await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/ai/next-actions`, { trigger }, 90000);
+      setFollowUpRecommendations(response?.data?.recommendations || []);
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "SCC Intelligence could not generate next actions."); }
+    finally { setAiBusy(false); }
+  };
+
+  const prepareInterview = async () => {
+    if (!interviewSubject.trim() || !interviewOfficerRank.trim() || !interviewOfficerName.trim()) return setWorkspaceError("Subject and interviewing officer details are required.");
+    setAiBusy(true); setWorkspaceError(""); setInterviewAssessment(null); setLiveInterviewAnalysis(null); setInterviewTranscript(""); liveTranscriptRef.current = "";
+    try {
+      localStorage.setItem("scc_interview_rank", interviewOfficerRank.trim());
+      localStorage.setItem("scc_interview_name", interviewOfficerName.trim());
+      const response = await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/interviews/prepare`, {
+        subject_name: interviewSubject, interview_type: interviewType, officer_rank: interviewOfficerRank, officer_name: interviewOfficerName,
+        second_officer_present: secondOfficerPresent, second_officer_rank: secondOfficerRank, second_officer_name: secondOfficerName,
+        circumstance: interviewCircumstance,
+      }, 90000);
+      setActiveInterview(response?.data || null);
+      // Refresh case so the new interview is part of the persistent record.
+      const detail = await api.get(`/cases/${getCaseKey(selectedCase)}`);
+      if (detail?.data) applyWorkspaceCase(detail.data);
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to prepare interview."); }
+    finally { setAiBusy(false); }
+  };
+
+  const requestLiveInterviewTurn = async (transcript = liveTranscriptRef.current, manualDirection = "") => {
+    if (!activeInterview?.id || !transcript.trim()) return;
+    try {
+      const response = await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/interviews/${activeInterview.id}/live-turn`, {
+        transcript, current_question: liveInterviewAnalysis?.next_question || activeInterview?.next_question || "", manual_direction: manualDirection,
+      }, 90000);
+      setLiveInterviewAnalysis(response?.data || null);
+    } catch (error) { console.warn("SCC live interview analysis unavailable:", error); }
+  };
+
+  const startInterviewRecording = async () => {
+    if (!activeInterview?.id) return setWorkspaceError("Prepare an interview before starting recording.");
+    if (!navigator.mediaDevices?.getUserMedia) return setWorkspaceError("This browser does not support microphone recording.");
+    setWorkspaceError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recordingChunksRef.current = [];
+      recorder.ondataavailable = (event) => { if (event.data?.size) recordingChunksRef.current.push(event.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size) {
+          try { await api.post(`/cases/${getCaseKey(selectedCase)}/interviews/${activeInterview.id}/recording`, blob, { timeout: 120000, headers: { "Content-Type": blob.type || "audio/webm" } }); }
+          catch (error) { console.warn("Interview recording upload failed:", error); }
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start(1000);
+
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (Recognition) {
+        const recognition = new Recognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "en-AU";
+        recognition.onresult = (event) => {
+          let finalText = "";
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const text = event.results[i][0]?.transcript || "";
+            if (event.results[i].isFinal) finalText += `${text.trim()} `;
+          }
+          if (finalText.trim()) {
+            const next = `${liveTranscriptRef.current}${liveTranscriptRef.current ? "\n" : ""}${finalText.trim()}`;
+            liveTranscriptRef.current = next;
+            setInterviewTranscript(next);
+            window.setTimeout(() => requestLiveInterviewTurn(next), 250);
+          }
+        };
+        recognition.onerror = (event) => console.warn("Speech recognition:", event.error);
+        speechRecognitionRef.current = recognition;
+        recognition.start();
+      }
+      setIsInterviewRecording(true);
+      setLiveInterviewAnalysis({ next_question: activeInterview.next_question, why: "Opening question prepared from the Case File.", alternate_questions: [] });
+    } catch (error) { setWorkspaceError(error?.message || "Unable to start microphone recording."); }
+  };
+
+  const stopInterviewRecording = async () => {
+    if (!activeInterview?.id) return;
+    setIsInterviewRecording(false);
+    try { speechRecognitionRef.current?.stop(); } catch {}
+    speechRecognitionRef.current = null;
+    try { if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop(); } catch {}
+    setAiBusy(true); setWorkspaceError("");
+    try {
+      const response = await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/interviews/${activeInterview.id}/finalize`, { transcript: liveTranscriptRef.current || interviewTranscript }, 120000);
+      setInterviewAssessment(response?.data || null);
+      const detail = await api.get(`/cases/${getCaseKey(selectedCase)}`);
+      if (detail?.data) applyWorkspaceCase(detail.data);
+      await getNextActions("post_interview");
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to complete post-interview assessment."); }
+    finally { setAiBusy(false); }
+  };
+
+  const planOperation = async () => {
+    if (!isUserAdmin) return;
+    setOperationBusy(true); setWorkspaceError("");
+    try {
+      await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/operations/plan`, { operation_type: operationType, command_instructions: operationInstructions, objective_override: operationObjective }, 90000);
+      setOperationInstructions(""); setOperationObjective("");
+      const detail = await api.get(`/cases/${getCaseKey(selectedCase)}`);
+      if (detail?.data) applyWorkspaceCase(detail.data);
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to generate Command operation briefing."); }
+    finally { setOperationBusy(false); }
+  };
+
+  const startOperation = async (operationId) => {
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/operations/${operationId}/start`, {});
+    if (updated) applyWorkspaceCase(updated);
+  };
+
+  const markAllNotificationsRead = async () => {
+    try { await api.post("/notifications/read", { notification_ids: [] }); await loadNotifications(); }
+    catch { /* non-blocking */ }
   };
 
   const handleFilterChange = (nextFilter) => {
@@ -2644,6 +2874,14 @@ export default function Dashboard() {
               </p>
             </div>
 
+            <div className="relative">
+              <button type="button" onClick={()=>setNotificationsOpen((value)=>!value)} className="relative inline-flex items-center justify-center h-9 w-9 rounded-xl border border-[#1b324d]/80 bg-[#0d1b2a]/60 text-[#91a3b9] hover:text-white">
+                <Bell className="h-4 w-4" />
+                {notifications.filter((item)=>!item.read).length > 0 && <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-[#d4b25a] text-[#07101b] text-[9px] font-bold flex items-center justify-center">{Math.min(99,notifications.filter((item)=>!item.read).length)}</span>}
+              </button>
+              {notificationsOpen && <div className="absolute right-0 top-11 z-50 w-[340px] max-w-[85vw] rounded-xl border border-[#294766] bg-[#081726]/98 shadow-2xl p-3"><div className="flex items-center justify-between"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">SCC Notifications</p><button onClick={markAllNotificationsRead} className="text-[9px] font-mono uppercase text-[#7186a0]">Mark all read</button></div><div className="mt-3 max-h-80 overflow-auto space-y-2">{notifications.length ? notifications.map((item)=><button key={item.id} onClick={()=>{const found=cases.find((c)=>c.id===item.case_uid);if(found){setSelectedCase(found);setIsDetailOpen(true);}setNotificationsOpen(false);}} className={`w-full text-left rounded-lg border p-3 ${item.read ? "border-[#1b324d]" : "border-[#665522] bg-[#2d2510]/20"}`}><p className="text-xs font-semibold text-white">{item.title}</p><p className="mt-1 text-[10px] text-[#8ba0bd]">{item.message}</p></button>) : <p className="py-6 text-center text-xs text-[#607793]">No notifications.</p>}</div></div>}
+            </div>
+
             <button
               type="button"
               onClick={handleSignOut}
@@ -3568,7 +3806,7 @@ export default function Dashboard() {
               {(["opened", "closed"].includes(String(selectedCase.status || "").toLowerCase()) || selectedCase.workspace_unlocked) && (
                 <div className="mt-7 rounded-xl border border-[#1b324d]/80 bg-[#0b1828]/65 p-4">
                   <div className="flex flex-wrap gap-2 border-b border-[#1b324d]/80 pb-3">
-                    {["overview","log","evidence","personnel","activity","requests", ...(isUserAdmin ? ["command"] : [])].map((tab) => (
+                    {["overview","log","evidence","gaps","leads","tasks","interviews","personnel","activity","requests", ...(isUserAdmin ? ["command"] : [])].map((tab) => (
                       <button key={tab} type="button" onClick={() => { setWorkspaceTab(tab); setWorkspaceError(""); }} className={`px-3 py-2 rounded-lg text-[10px] font-mono uppercase tracking-wider border ${workspaceTab === tab ? "border-[#d4b25a]/70 bg-[#d4b25a] text-[#07101b]" : "border-[#2b4265] bg-[#10233a]/60 text-[#9aabc0]"}`}>{tab}</button>
                     ))}
                   </div>
@@ -3578,6 +3816,10 @@ export default function Dashboard() {
                     <div className="rounded-xl border border-[#1b324d] p-3"><span className="text-[#7186a0]">Lead Investigator</span><p className="mt-1 text-white">{selectedCase.lead_investigator}</p></div>
                     <div className="rounded-xl border border-[#1b324d] p-3"><span className="text-[#7186a0]">Authorised Priority</span><p className="mt-1 text-white uppercase">{selectedCase.priority}</p></div>
                     <div className="md:col-span-2 rounded-xl border border-[#1b324d] p-3"><span className="text-[#7186a0]">Investigation Objective</span><p className="mt-1 whitespace-pre-wrap">{selectedCase.investigation_objective || "—"}</p></div>
+                    <div className="md:col-span-2 rounded-xl border border-[#665522]/70 bg-[#2d2510]/25 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-mono uppercase tracking-wider text-[#d4b25a]">SCC Case Intelligence</p><p className="mt-1 text-xs text-[#8ba0bd]">Analyse the current Case File and recommend the strongest next investigative actions.</p></div><button disabled={aiBusy} onClick={()=>getNextActions("manual")} className="px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase inline-flex items-center gap-2"><BrainCircuit className="h-4 w-4" />{aiBusy ? "Analysing..." : "What should I do next?"}</button></div>
+                      {!!followUpRecommendations.length && <div className="mt-4 space-y-2">{followUpRecommendations.map((rec,index)=><div key={`${rec.title}-${index}`} className="rounded-lg border border-[#1b324d] bg-[#07111d]/70 p-3"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">{rec.priority || "routine"} · {rec.action_type || "review"}</p><p className="mt-1 text-sm font-semibold text-white">{rec.title}</p><p className="mt-1 text-xs text-[#9aabc0]">{rec.why}</p>{rec.linked_record && <p className="mt-1 text-[10px] font-mono text-[#607793]">Linked: {rec.linked_record}</p>}</div>)}</div>}
+                    </div>
                   </div>}
 
                   {workspaceTab === "log" && <div className="mt-4 space-y-4">
@@ -3598,6 +3840,36 @@ export default function Dashboard() {
                     <div className="grid md:grid-cols-2 gap-3">{(selectedCase.evidence || []).filter((x)=>!x.removed).map((item)=><div key={item.evidence_id} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-3"><p className="text-[10px] font-mono text-[#d4b25a]">{item.evidence_id} · {item.type}</p><p className="mt-2 text-sm text-white">{item.description || item.filename || "Evidence item"}</p><p className="mt-1 text-[10px] text-[#7186a0]">{item.filename || "Written information"} · {item.uploaded_by || item.submitted_by || "Unknown"} · {formatDate(item.uploaded_at || item.submitted_at)}</p>{item.file_id && <button onClick={()=>openEvidenceFile(item)} className="mt-3 text-[10px] font-mono uppercase text-[#8ba0bd] hover:text-white">Open / Preview File</button>}{isUserAdmin && <button onClick={()=>removeEvidence(item)} className="mt-3 ml-4 text-[10px] font-mono uppercase text-[#f08080]">Remove with reason</button>}</div>)}</div>
                   </div>}
 
+                  {workspaceTab === "gaps" && <div className="mt-4 space-y-4">
+                    <div className="grid md:grid-cols-2 gap-3"><input value={gapQuestion} onChange={(e)=>setGapQuestion(e.target.value)} className={INPUT_CLASS} placeholder="Unanswered investigative question"/><input value={gapDetail} onChange={(e)=>setGapDetail(e.target.value)} className={INPUT_CLASS} placeholder="Why this matters / context"/></div>
+                    <button onClick={createInformationGap} disabled={workspaceBusy} className="px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase inline-flex items-center gap-2"><Target className="h-4 w-4"/>Create Information Gap</button>
+                    <div className="space-y-3">{(selectedCase.information_gaps || []).map((gap)=><div key={gap.id} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-3"><div className="flex flex-wrap justify-between gap-2"><p className="text-[10px] font-mono text-[#d4b25a]">{gap.id} · {gap.status}</p><select value={gap.status || "open"} onChange={(e)=>updateInformationGap(gap.id,e.target.value)} className="rounded-lg border border-[#2b4265] bg-[#0b1828] px-2 py-1 text-[10px] text-white"><option>open</option><option>partially addressed</option><option>resolved</option></select></div><p className="mt-2 text-sm text-white">{gap.question}</p>{gap.detail && <p className="mt-1 text-xs text-[#8ba0bd]">{gap.detail}</p>}{gap.resolution && <p className="mt-1 text-xs text-[#79e0a4]">Resolution: {gap.resolution}</p>}</div>)}</div>
+                  </div>}
+
+                  {workspaceTab === "leads" && <div className="mt-4 space-y-4">
+                    <div className="grid md:grid-cols-2 gap-3"><input value={leadTitle} onChange={(e)=>setLeadTitle(e.target.value)} className={INPUT_CLASS} placeholder="Lead title"/><input value={leadDetail} onChange={(e)=>setLeadDetail(e.target.value)} className={INPUT_CLASS} placeholder="What should be developed / checked"/></div>
+                    <button onClick={createLead} disabled={workspaceBusy} className="px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase inline-flex items-center gap-2"><Lightbulb className="h-4 w-4"/>Create Lead</button>
+                    <div className="space-y-3">{(selectedCase.leads || []).map((lead)=><div key={lead.id} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-3"><div className="flex flex-wrap justify-between gap-2"><p className="text-[10px] font-mono text-[#d4b25a]">{lead.id} · {lead.status}</p><select value={lead.status || "new"} onChange={(e)=>updateLeadStatus(lead.id,e.target.value)} className="rounded-lg border border-[#2b4265] bg-[#0b1828] px-2 py-1 text-[10px] text-white"><option>new</option><option>developing</option><option>verified</option><option>disproved</option><option>closed</option></select></div><p className="mt-2 text-sm text-white">{lead.title}</p>{lead.detail && <p className="mt-1 text-xs text-[#8ba0bd]">{lead.detail}</p>}{lead.linked_gap_id && <p className="mt-1 text-[10px] font-mono text-[#607793]">Linked gap: {lead.linked_gap_id}</p>}</div>)}</div>
+                  </div>}
+
+                  {workspaceTab === "tasks" && <div className="mt-4 space-y-4">
+                    <div className="grid md:grid-cols-3 gap-3"><input value={taskTitle} onChange={(e)=>setTaskTitle(e.target.value)} className={INPUT_CLASS} placeholder="Investigative task"/><input value={taskAssignee} onChange={(e)=>setTaskAssignee(e.target.value)} className={INPUT_CLASS} placeholder="Assign to username / callsign"/><input type="datetime-local" value={taskDue} onChange={(e)=>setTaskDue(e.target.value)} className={INPUT_CLASS}/></div>
+                    <button onClick={createTask} disabled={workspaceBusy} className="px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase inline-flex items-center gap-2"><ListTodo className="h-4 w-4"/>Create Task</button>
+                    <div className="space-y-3">{(selectedCase.tasks || []).map((task)=><div key={task.id} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-3"><div className="flex flex-wrap justify-between gap-2"><p className="text-[10px] font-mono text-[#d4b25a]">{task.id} · {task.priority}</p><select value={task.status || "open"} onChange={(e)=>updateTaskStatus(task.id,e.target.value)} className="rounded-lg border border-[#2b4265] bg-[#0b1828] px-2 py-1 text-[10px] text-white"><option>open</option><option>in progress</option><option>completed</option></select></div><p className="mt-2 text-sm text-white">{task.title}</p><p className="mt-1 text-xs text-[#8ba0bd]">Assigned: {task.assigned_to || "Unassigned"}{task.due_at ? ` · Due ${task.due_at}` : ""}</p></div>)}</div>
+                  </div>}
+
+                  {workspaceTab === "interviews" && <div className="mt-4 space-y-5">
+                    {!activeInterview && <div className="rounded-xl border border-[#1b324d] bg-[#07111d]/60 p-4"><div className="flex items-center gap-2"><BrainCircuit className="h-5 w-5 text-[#d4b25a]"/><p className="text-sm font-bold uppercase tracking-wider text-white">SCC AI Interview Director</p></div><div className="mt-4 grid md:grid-cols-2 gap-3"><input value={interviewSubject} onChange={(e)=>setInterviewSubject(e.target.value)} className={INPUT_CLASS} placeholder="Interview subject *"/><select value={interviewType} onChange={(e)=>setInterviewType(e.target.value)} className={INPUT_CLASS}><option>Suspect / Person of Interest</option><option>Witness</option><option>Victim</option><option>Follow-Up Interview</option><option>Evidence Clarification</option></select><input value={interviewOfficerRank} onChange={(e)=>setInterviewOfficerRank(e.target.value)} className={INPUT_CLASS} placeholder="Your rank *"/><input value={interviewOfficerName} onChange={(e)=>setInterviewOfficerName(e.target.value)} className={INPUT_CLASS} placeholder="Your name *"/><label className="md:col-span-2 flex items-center gap-2 text-xs text-[#9aabc0]"><input type="checkbox" checked={secondOfficerPresent} onChange={(e)=>setSecondOfficerPresent(e.target.checked)}/>Another officer is present</label>{secondOfficerPresent && <><input value={secondOfficerRank} onChange={(e)=>setSecondOfficerRank(e.target.value)} className={INPUT_CLASS} placeholder="Second officer rank"/><input value={secondOfficerName} onChange={(e)=>setSecondOfficerName(e.target.value)} className={INPUT_CLASS} placeholder="Second officer name"/></>}<textarea value={interviewCircumstance} onChange={(e)=>setInterviewCircumstance(e.target.value)} className={`${INPUT_CLASS} md:col-span-2 min-h-[70px]`} placeholder="Optional circumstance / controlled caution context (e.g. voluntary interview, arrested subject)"/></div><button disabled={aiBusy} onClick={prepareInterview} className="mt-4 px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">{aiBusy ? "Generating..." : "Generate Interview"}</button></div>}
+
+                    {activeInterview && <div className="space-y-4"><div className="rounded-xl border border-[#665522]/70 bg-[#2d2510]/20 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">{activeInterview.id} · {activeInterview.interview_type}</p><p className="mt-1 text-lg font-semibold text-white">{activeInterview.subject_name}</p></div><button onClick={()=>{ if(!isInterviewRecording){setActiveInterview(null);setInterviewTranscript("");setInterviewAssessment(null);setLiveInterviewAnalysis(null);} }} className="text-[10px] font-mono uppercase text-[#7186a0]">New Interview</button></div><p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[#d8e1ec]">{activeInterview.opening}</p></div>
+                      <div className="grid lg:grid-cols-3 gap-3"><div className="lg:col-span-2 rounded-xl border border-[#1b324d] p-4"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Live Transcript</p><div className={`text-[10px] font-mono uppercase ${isInterviewRecording ? "text-[#f08080]" : "text-[#7186a0]"}`}>{isInterviewRecording ? "● Recording / Listening" : "Ready"}</div></div><textarea value={interviewTranscript} onChange={(e)=>{setInterviewTranscript(e.target.value);liveTranscriptRef.current=e.target.value;}} className={`${INPUT_CLASS} mt-3 min-h-[240px] font-mono text-xs`} placeholder="Live transcript appears here. You can correct Roblox names/callsigns before continuing."/><div className="mt-3 flex flex-wrap gap-2">{!isInterviewRecording ? <button onClick={startInterviewRecording} className="px-4 py-2 rounded-xl border border-[#245d3d] bg-[#0f2e1e]/80 text-[#79e0a4] text-xs font-bold uppercase inline-flex items-center gap-2"><Mic className="h-4 w-4"/>Start Interview</button> : <button onClick={stopInterviewRecording} className="px-4 py-2 rounded-xl border border-[#6b2929] bg-[#2a1414]/80 text-[#f08080] text-xs font-bold uppercase inline-flex items-center gap-2"><Square className="h-4 w-4"/>Stop Recording</button>}<button disabled={!interviewTranscript.trim() || aiBusy} onClick={()=>requestLiveInterviewTurn(interviewTranscript,"Generate a different useful question")} className="px-4 py-2 rounded-xl border border-[#2b4265] text-xs font-bold uppercase text-white">Different Question</button></div></div>
+                      <div className="rounded-xl border border-[#1b324d] p-4"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Interview Objectives</p><div className="mt-3 space-y-2">{(activeInterview.objectives || []).map((obj)=><div key={obj.id || obj.label} className="text-xs text-[#b8c6d7]"><span className="text-[#d4b25a]">○</span> {obj.label || obj.question}</div>)}</div></div></div>
+                      <div className="rounded-xl border border-[#d4b25a]/40 bg-[#172234]/80 p-4"><p className="text-[10px] font-mono uppercase tracking-wider text-[#d4b25a]">Next Suggested Line</p><p className="mt-3 text-lg font-semibold leading-7 text-white">“{liveInterviewAnalysis?.next_question || activeInterview.next_question}”</p>{liveInterviewAnalysis?.why && <p className="mt-2 text-xs text-[#9aabc0]"><span className="text-[#d4b25a]">WHY:</span> {liveInterviewAnalysis.why}</p>}{Array.isArray(liveInterviewAnalysis?.alternate_questions) && !!liveInterviewAnalysis.alternate_questions.length && <div className="mt-3 space-y-1">{liveInterviewAnalysis.alternate_questions.map((q,i)=><button key={i} onClick={()=>setLiveInterviewAnalysis((current)=>({...current,next_question:q}))} className="block text-left text-xs text-[#8ba0bd] hover:text-white">Alternate: {q}</button>)}</div>}</div>
+                      {interviewAssessment && <div className="rounded-xl border border-[#245d3d] bg-[#0f2e1e]/25 p-4"><p className="text-[10px] font-mono uppercase tracking-wider text-[#79e0a4]">SCC Post-Interview Assessment</p><p className="mt-3 whitespace-pre-wrap text-sm text-white">{interviewAssessment.account_summary || "Assessment completed."}</p>{Array.isArray(interviewAssessment.potential_legal_issues) && interviewAssessment.potential_legal_issues.length > 0 && <div className="mt-4"><p className="text-[10px] font-mono uppercase text-[#f0d67a]">Potential Legal Issues — Verify Current Legislation</p>{interviewAssessment.potential_legal_issues.map((issue,i)=><div key={i} className="mt-2 rounded-lg border border-[#665522] p-3 text-xs text-[#d8e1ec]">{typeof issue === "string" ? issue : issue.summary || issue.issue || JSON.stringify(issue)}</div>)}</div>}{Array.isArray(interviewAssessment.recommended_outcomes) && interviewAssessment.recommended_outcomes.length > 0 && <div className="mt-4"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Recommended Next Actions · Human Confirmation Required</p>{interviewAssessment.recommended_outcomes.map((outcome,i)=><div key={i} className="mt-2 rounded-lg border border-[#1b324d] p-3"><p className="text-sm font-semibold text-white">{outcome.title || outcome.outcome || `Recommendation ${i+1}`}</p><p className="mt-1 text-xs text-[#9aabc0]">{outcome.why || outcome.reason || "Review against the Case File before confirming action."}</p></div>)}</div>}</div>}
+                    </div>}
+                    {(selectedCase.interviews || []).length > 0 && <div className="border-t border-[#1b324d] pt-4"><p className="text-[10px] font-mono uppercase text-[#607793]">Interview Record</p><div className="mt-2 space-y-2">{(selectedCase.interviews || []).slice().reverse().map((item)=><button key={item.id} onClick={()=>{setActiveInterview(item);setInterviewTranscript(item.transcript || "");liveTranscriptRef.current=item.transcript || "";setInterviewAssessment(item.assessment || null);setLiveInterviewAnalysis(item.last_live_analysis || null);}} className="w-full text-left rounded-lg border border-[#1b324d] p-3"><p className="text-[10px] font-mono text-[#d4b25a]">{item.id} · {item.status}</p><p className="mt-1 text-sm text-white">{item.subject_name} · {item.interview_type}</p></button>)}</div></div>}
+                  </div>}
+
                   {workspaceTab === "personnel" && <div className="mt-4 space-y-3"><p className="text-xs text-[#7186a0]">Lead: <span className="text-white">{selectedCase.lead_investigator}</span></p>{(selectedCase.assigned_investigators || []).map((name)=><div key={name} className="rounded-lg border border-[#1b324d] px-3 py-2 text-sm text-[#d8e1ec]">{name}</div>)}{isUserAdmin && <div className="flex gap-2"><input value={personnelName} onChange={(e)=>setPersonnelName(e.target.value)} className={INPUT_CLASS} placeholder="Investigator / callsign"/><button onClick={assignInvestigator} className="px-4 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Assign</button></div>}</div>}
 
                   {workspaceTab === "activity" && <div className="mt-4 space-y-2">{(selectedCase.activity_log || []).slice().reverse().map((item)=><div key={item.id} className="rounded-lg border border-[#1b324d] px-3 py-2"><p className="text-[10px] font-mono text-[#8ba0bd]">{formatDate(item.created_at)} · {item.actor}</p><p className="mt-1 text-xs text-white">{item.action}</p>{item.detail && <p className="text-xs text-[#7186a0]">{item.detail}</p>}</div>)}</div>}
@@ -3609,7 +3881,12 @@ export default function Dashboard() {
                     {selectedCase.closure_request && <div className="rounded-xl border border-[#665522] bg-[#2d2510]/30 p-3"><p className="text-[10px] font-mono text-[#d4b25a]">Closure Request · {selectedCase.closure_request.status}</p><p className="mt-2 text-sm text-white">{selectedCase.closure_request.outcome_summary}</p>{isUserAdmin && selectedCase.closure_request.status === "pending" && <div className="mt-2 flex gap-3"><button onClick={()=>decideClosure("approve")} className="text-xs text-[#79e0a4]">Approve Closure</button><button onClick={()=>decideClosure("return")} className="text-xs text-[#d4b25a]">Return to Investigator</button></div>}</div>}
                   </div>}
 
-                  {workspaceTab === "command" && isUserAdmin && <div className="mt-4 space-y-4"><div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Command Flags</p><div className="mt-2 flex flex-wrap gap-2">{["Command Attention","Restricted","Urgent Review"].map((flag)=><button key={flag} onClick={()=>toggleCommandFlag(flag)} className={`px-3 py-2 rounded-lg border text-[10px] uppercase ${selectedCase.command_flags?.includes(flag) ? "border-[#d4b25a] text-[#d4b25a]" : "border-[#2b4265] text-[#8ba0bd]"}`}>{flag}</button>)}</div></div><div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Private Command Notes</p><textarea value={commandNote} onChange={(e)=>setCommandNote(e.target.value)} className={`${INPUT_CLASS} mt-2 min-h-[80px]`} placeholder="Visible to Command only"/><button onClick={addCommandNote} className="mt-2 px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Add Command Note</button><div className="mt-3 space-y-2">{(selectedCase.command_notes || []).slice().reverse().map((note)=><div key={note.id} className="rounded-lg border border-[#665522]/50 p-3"><p className="text-xs text-white">{note.note}</p><p className="mt-1 text-[10px] text-[#7186a0]">{note.author} · {formatDate(note.created_at)}</p></div>)}</div></div></div>}
+                  {workspaceTab === "command" && isUserAdmin && <div className="mt-4 space-y-5">
+                    <div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Command Flags</p><div className="mt-2 flex flex-wrap gap-2">{["Command Attention","Restricted","Urgent Review"].map((flag)=><button key={flag} onClick={()=>toggleCommandFlag(flag)} className={`px-3 py-2 rounded-lg border text-[10px] uppercase ${selectedCase.command_flags?.includes(flag) ? "border-[#d4b25a] text-[#d4b25a]" : "border-[#2b4265] text-[#8ba0bd]"}`}>{flag}</button>)}</div></div>
+                    <div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Private Command Notes</p><textarea value={commandNote} onChange={(e)=>setCommandNote(e.target.value)} className={`${INPUT_CLASS} mt-2 min-h-[80px]`} placeholder="Visible to Command only"/><button onClick={addCommandNote} className="mt-2 px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Add Command Note</button><div className="mt-3 space-y-2">{(selectedCase.command_notes || []).slice().reverse().map((note)=><div key={note.id} className="rounded-lg border border-[#665522]/50 p-3"><p className="text-xs text-white">{note.note}</p><p className="mt-1 text-[10px] text-[#7186a0]">{note.author} · {formatDate(note.created_at)}</p></div>)}</div></div>
+                    <div className="border-t border-[#1b324d] pt-5"><div className="flex items-center gap-2"><Target className="h-5 w-5 text-[#d4b25a]"/><div><p className="text-sm font-bold uppercase text-white">Operation Planner</p><p className="text-[10px] font-mono uppercase text-[#607793]">Case context automatically loaded</p></div></div><div className="mt-4 grid md:grid-cols-2 gap-3"><select value={operationType} onChange={(e)=>setOperationType(e.target.value)} className={INPUT_CLASS}><option>Surveillance</option><option>Arrest Operation</option><option>Search / Evidence Recovery</option><option>Person Locate</option><option>Vehicle Locate</option><option>Interview Operation</option><option>Intelligence Gathering</option><option>Coordinated Enforcement</option><option>Custom Operation</option></select><input value={operationObjective} onChange={(e)=>setOperationObjective(e.target.value)} className={INPUT_CLASS} placeholder="Optional objective override"/><textarea value={operationInstructions} onChange={(e)=>setOperationInstructions(e.target.value)} className={`${INPUT_CLASS} md:col-span-2 min-h-[90px]`} placeholder="Command instructions SCC cannot derive from the Case File"/></div><button disabled={operationBusy} onClick={planOperation} className="mt-3 px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">{operationBusy ? "Generating Briefing..." : "Generate Operation Briefing"}</button></div>
+                    {(selectedCase.operations || []).slice().reverse().map((op)=><div key={op.id} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-mono text-[#d4b25a]">{op.id} · {op.status}</p><p className="mt-1 text-sm font-semibold text-white">{op.operation_type}</p></div>{op.status === "planned" && <button onClick={()=>startOperation(op.id)} className="px-3 py-2 rounded-lg border border-[#245d3d] text-[#79e0a4] text-[10px] font-bold uppercase inline-flex items-center gap-2"><Play className="h-3 w-3"/>Start Operation</button>}</div>{op.briefing && <div className="mt-3 grid md:grid-cols-2 gap-2 text-xs text-[#a9b8ca]"><div className="rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Situation</span><p className="mt-1 text-white">{op.briefing.situation || "—"}</p></div><div className="rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Operational Objective</span><p className="mt-1 text-white">{op.briefing.operational_objective || "—"}</p></div><div className="md:col-span-2 rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Operational Plan</span><p className="mt-1 whitespace-pre-wrap text-white">{typeof op.briefing.operational_plan === "string" ? op.briefing.operational_plan : JSON.stringify(op.briefing.operational_plan)}</p></div></div>}</div>)}
+                  </div>}
                 </div>
               )}
 
