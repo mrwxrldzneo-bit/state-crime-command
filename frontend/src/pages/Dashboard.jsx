@@ -182,6 +182,64 @@ function playSuccessSound() {
   });
 }
 
+function dedupeCases(caseList) {
+  const map = new Map();
+
+  for (const item of Array.isArray(caseList) ? caseList : []) {
+    const caseId = String(item?.case_id || "").trim();
+    const fallbackKey =
+      item?.backend_id ||
+      item?.id ||
+      item?.client_request_id ||
+      item?.case_uid ||
+      item?._id;
+
+    const key = caseId || String(fallbackKey || "").trim();
+
+    if (!key) {
+      continue;
+    }
+
+    const existing = map.get(key);
+
+    if (!existing) {
+      map.set(key, item);
+      continue;
+    }
+
+    const existingTime = new Date(
+      existing?.updated_at ||
+      existing?.created_at ||
+      0
+    ).getTime();
+
+    const incomingTime = new Date(
+      item?.updated_at ||
+      item?.created_at ||
+      0
+    ).getTime();
+
+    map.set(
+      key,
+      incomingTime >= existingTime
+        ? { ...existing, ...item }
+        : { ...item, ...existing }
+    );
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const aTime = new Date(
+      a?.updated_at || a?.created_at || 0
+    ).getTime();
+
+    const bTime = new Date(
+      b?.updated_at || b?.created_at || 0
+    ).getTime();
+
+    return bTime - aTime;
+  });
+}
+
 function readCachedCases() {
   try {
     const raw = localStorage.getItem(CASE_CACHE_KEY);
@@ -191,7 +249,19 @@ function readCachedCases() {
     }
 
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const deduped = dedupeCases(parsed);
+
+    if (
+      Array.isArray(parsed) &&
+      deduped.length !== parsed.length
+    ) {
+      localStorage.setItem(
+        CASE_CACHE_KEY,
+        JSON.stringify(deduped)
+      );
+    }
+
+    return deduped;
   } catch (error) {
     console.warn("Unable to read SCC vault cache:", error);
     return [];
@@ -200,9 +270,11 @@ function readCachedCases() {
 
 function writeCachedCases(nextCases) {
   try {
+    const deduped = dedupeCases(nextCases);
+
     localStorage.setItem(
       CASE_CACHE_KEY,
-      JSON.stringify(Array.isArray(nextCases) ? nextCases : [])
+      JSON.stringify(deduped)
     );
   } catch (error) {
     console.warn("Unable to write SCC vault cache:", error);
@@ -342,49 +414,20 @@ function buildCaseDiscordEmbeds(caseData) {
 }
 
 function mergeCaseLists(localCases, remoteCases) {
-  const map = new Map();
-
-  for (const item of localCases) {
-    const key =
-      item?.client_request_id ||
-      item?.case_id ||
-      getCaseKey(item);
-
-    if (key) {
-      map.set(key, item);
-    }
-  }
-
-  for (const remote of remoteCases) {
-    const key =
-      remote?.client_request_id ||
-      remote?.case_id ||
-      getCaseKey(remote);
-
-    if (!key) {
-      continue;
-    }
-
-    const local = map.get(key);
-
-    map.set(key, {
-      ...(local || {}),
-      ...remote,
-      backend_id: remote?.id || remote?.backend_id || local?.backend_id,
-      sync_status: "synced",
-    });
-  }
-
-  return Array.from(map.values()).sort((a, b) => {
-    const aTime = new Date(
-      a?.created_at || a?.updated_at || 0
-    ).getTime();
-    const bTime = new Date(
-      b?.created_at || b?.updated_at || 0
-    ).getTime();
-
-    return bTime - aTime;
-  });
+  return dedupeCases([
+    ...(Array.isArray(localCases) ? localCases : []),
+    ...(Array.isArray(remoteCases) ? remoteCases : []),
+  ]).map((item) => ({
+    ...item,
+    backend_id:
+      item?.backend_id ||
+      item?.id ||
+      null,
+    sync_status:
+      item?.backend_id || item?.id
+        ? "synced"
+        : item?.sync_status || "local",
+  }));
 }
 
 function randomMatrixChar() {
@@ -484,7 +527,7 @@ function GlassPanel({
     <div
       className={[
         "backdrop-blur-md",
-        "bg-[#0d1b2a]/60",
+        "bg-[#11243a]/68",
         "border border-[#1b324d]/80",
         "rounded-2xl",
         "shadow-[inset_0_1px_0_rgba(255,255,255,0.035),0_22px_70px_-42px_rgba(0,0,0,0.95)]",
@@ -572,14 +615,14 @@ function HeaderClock() {
 
   return (
     <div className="hidden lg:flex absolute left-1/2 -translate-x-1/2 flex-col items-center pointer-events-none">
-      <div className="font-mono text-sm font-bold tracking-[0.18em] text-[#d4b25a]">
+      <div className="font-mono text-base font-bold tracking-[0.18em] text-[#d4b25a]">
         {timeText}
-        <span className="ml-2 text-[9px] font-normal tracking-[0.16em] text-[#7186a0]">
+        <span className="ml-2 text-[10px] font-normal tracking-[0.16em] text-[#8196b2]">
           {zoneText} · SYDNEY
         </span>
       </div>
 
-      <div className="mt-1 text-[8px] font-mono uppercase tracking-[0.28em] text-[#607793]">
+      <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.28em] text-[#7186a0]">
         {dateText}
       </div>
     </div>
@@ -782,8 +825,9 @@ export default function Dashboard() {
           ? updater(currentCases)
           : updater;
 
-      writeCachedCases(nextCases);
-      return nextCases;
+      const deduped = dedupeCases(nextCases);
+      writeCachedCases(deduped);
+      return deduped;
     });
   }, []);
 
@@ -2116,7 +2160,7 @@ export default function Dashboard() {
 
   if (!hasCaseAccess && user) {
     return (
-      <div className="min-h-screen bg-[#020813] flex items-center justify-center p-6 text-white">
+      <div className="min-h-screen bg-[#061321] flex items-center justify-center p-6 text-white">
         <GlassPanel className="max-w-lg w-full p-8 text-center">
           <Shield className="h-10 w-10 mx-auto text-[#d4b25a]" />
           <h1 className="mt-4 text-xl font-bold uppercase tracking-wider">
@@ -2132,14 +2176,14 @@ export default function Dashboard() {
 
   return (
     <div
-      className="min-h-screen bg-[#020813] text-[#e7edf6] antialiased"
+      className="min-h-screen bg-[#061321] text-[#e7edf6] antialiased"
       style={{
         backgroundImage:
-          "linear-gradient(rgba(24,47,74,0.22) 1px, transparent 1px), linear-gradient(90deg, rgba(24,47,74,0.22) 1px, transparent 1px)",
+          "linear-gradient(rgba(39,73,108,0.26) 1px, transparent 1px), linear-gradient(90deg, rgba(39,73,108,0.26) 1px, transparent 1px)",
         backgroundSize: "42px 42px",
       }}
     >
-      <header className="sticky top-0 z-40 border-b border-[#1b324d]/80 bg-[#06111f]/82 backdrop-blur-xl">
+      <header className="sticky top-0 z-40 border-b border-[#294766]/80 bg-[#0a1a2b]/88 backdrop-blur-xl">
         <div className="relative max-w-7xl mx-auto px-4 md:px-6 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="h-11 w-11 rounded-xl border border-[#1b324d]/80 bg-[#0d1b2a]/75 backdrop-blur-md p-1.5">
@@ -2290,7 +2334,7 @@ export default function Dashboard() {
             </div>
 
             <div className="text-[9px] font-mono uppercase tracking-widest text-[#617895]">
-              {filteredCases.length} visible
+              {filteredCases.length} {filteredCases.length === 1 ? "case" : "cases"}
             </div>
           </div>
 
@@ -2602,8 +2646,8 @@ export default function Dashboard() {
 
       {isDetailOpen && selectedCase && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
-          <GlassPanel className="w-full max-w-5xl max-h-[94vh] overflow-y-auto bg-[#081321]/96 border-[#23405f]/90">
-            <div className="sticky top-0 z-20 px-6 md:px-8 py-5 bg-[#0a1c30]/95 backdrop-blur-xl border-b border-[#1b324d]/80">
+          <GlassPanel className="w-full max-w-3xl max-h-[88vh] overflow-y-auto bg-[#0b1d31]/96 border-[#2b4a6b]/90">
+            <div className="sticky top-0 z-20 px-5 md:px-6 py-4 bg-[#0d2238]/95 backdrop-blur-xl border-b border-[#294766]/80">
               <div className="flex items-start justify-between gap-5">
                 <div className="min-w-0">
                   <p className="font-mono text-sm md:text-base tracking-[0.08em] text-[#d4b25a]">
@@ -2645,7 +2689,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="px-6 md:px-8 py-6">
+            <div className="px-5 md:px-6 py-5">
               <div className="divide-y divide-[#1b324d]/80">
                 <div className="grid grid-cols-[36px_1fr] gap-4 py-5 first:pt-0">
                   <div className="text-[#d4b25a] pt-0.5">
