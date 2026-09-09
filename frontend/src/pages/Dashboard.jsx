@@ -862,6 +862,7 @@ export default function Dashboard() {
   const [caseNoteError, setCaseNoteError] = useState("");
   const [isSavingCaseNote, setIsSavingCaseNote] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState("overview");
+  const [workspaceHubOpen, setWorkspaceHubOpen] = useState(false);
   const [logAction, setLogAction] = useState("");
   const [logInformation, setLogInformation] = useState("");
   const [logOutcome, setLogOutcome] = useState("");
@@ -913,6 +914,22 @@ export default function Dashboard() {
   const [operationInstructions, setOperationInstructions] = useState("");
   const [operationObjective, setOperationObjective] = useState("");
   const [operationBusy, setOperationBusy] = useState(false);
+  const [operationQuickLog, setOperationQuickLog] = useState("");
+  const [operationQuickInfo, setOperationQuickInfo] = useState("");
+  const [operationDebriefOutcome, setOperationDebriefOutcome] = useState("");
+  const [operationDebriefEvidence, setOperationDebriefEvidence] = useState("");
+  const [operationDebriefUnresolved, setOperationDebriefUnresolved] = useState("");
+
+  // Legislation research / verified references
+  const [legislationQuery, setLegislationQuery] = useState("");
+  const [legislationResult, setLegislationResult] = useState(null);
+  const [legislationBusy, setLegislationBusy] = useState(false);
+  const [legislationAct, setLegislationAct] = useState("");
+  const [legislationSection, setLegislationSection] = useState("");
+  const [legislationTitle, setLegislationTitle] = useState("");
+  const [legislationUrl, setLegislationUrl] = useState("");
+  const [legislationSummary, setLegislationSummary] = useState("");
+  const [outcomeNotes, setOutcomeNotes] = useState("");
 
   // Persistent notifications
   const [notifications, setNotifications] = useState([]);
@@ -1398,7 +1415,7 @@ export default function Dashboard() {
     if (updated) { setLogAction(""); setLogInformation(""); setLogOutcome(""); setLogRelated(""); }
   };
 
-  const uploadCaseEvidence = async () => {
+  const uploadCaseEvidence = async (operationId = "") => {
     if (!selectedCase) return;
     if (evidenceType !== "Written Information" && !evidenceFile) return setWorkspaceError("Choose a file to upload.");
     setWorkspaceBusy(true); setWorkspaceError("");
@@ -1406,9 +1423,9 @@ export default function Dashboard() {
       let response;
       if (evidenceType === "Written Information") {
         const blob = new Blob([evidenceDescription || "Written information"], { type: "text/plain" });
-        response = await api.post(`/cases/${getCaseKey(selectedCase)}/evidence`, blob, { timeout: 60000, headers: { "Content-Type": "text/plain", "X-SCC-Filename": "written-information.txt", "X-SCC-Evidence-Type": evidenceType, "X-SCC-Description": evidenceDescription } });
+        response = await api.post(`/cases/${getCaseKey(selectedCase)}/evidence`, blob, { timeout: 60000, headers: { "Content-Type": "text/plain", "X-SCC-Filename": "written-information.txt", "X-SCC-Evidence-Type": evidenceType, "X-SCC-Description": evidenceDescription, "X-SCC-Operation-ID": operationId } });
       } else {
-        response = await api.post(`/cases/${getCaseKey(selectedCase)}/evidence`, evidenceFile, { timeout: 60000, headers: { "Content-Type": evidenceFile.type || "application/octet-stream", "X-SCC-Filename": evidenceFile.name, "X-SCC-Evidence-Type": evidenceType, "X-SCC-Description": evidenceDescription } });
+        response = await api.post(`/cases/${getCaseKey(selectedCase)}/evidence`, evidenceFile, { timeout: 60000, headers: { "Content-Type": evidenceFile.type || "application/octet-stream", "X-SCC-Filename": evidenceFile.name, "X-SCC-Evidence-Type": evidenceType, "X-SCC-Description": evidenceDescription, "X-SCC-Operation-ID": operationId } });
       }
       applyWorkspaceCase(response?.data); setEvidenceFile(null); setEvidenceDescription(""); playSuccessSound();
     } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Evidence upload failed."); } finally { setWorkspaceBusy(false); }
@@ -1629,6 +1646,70 @@ export default function Dashboard() {
   const startOperation = async (operationId) => {
     const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/operations/${operationId}/start`, {});
     if (updated) applyWorkspaceCase(updated);
+  };
+
+  const quickLogOperation = async (operationId) => {
+    if (!operationQuickLog.trim()) return setWorkspaceError("Quick Log action is required.");
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/operations/${operationId}/quick-log`, {
+      action_taken: operationQuickLog, information_obtained: operationQuickInfo, outcome_further_action: "",
+    });
+    if (updated) { setOperationQuickLog(""); setOperationQuickInfo(""); }
+  };
+
+  const debriefOperation = async (operationId) => {
+    if (!operationDebriefOutcome.trim()) return setWorkspaceError("Operation outcome is required before ending the operation.");
+    setOperationBusy(true); setWorkspaceError("");
+    try {
+      const response = await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/operations/${operationId}/debrief`, {
+        outcome: operationDebriefOutcome, evidence_obtained: operationDebriefEvidence, unresolved_matters: operationDebriefUnresolved,
+      }, 90000);
+      applyWorkspaceCase(response?.data);
+      setOperationDebriefOutcome(""); setOperationDebriefEvidence(""); setOperationDebriefUnresolved("");
+      await getNextActions("post_operation");
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to complete operation debrief."); }
+    finally { setOperationBusy(false); }
+  };
+
+  const searchLegislation = async () => {
+    setLegislationBusy(true); setWorkspaceError("");
+    try {
+      const response = await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/legislation/search`, { query: legislationQuery, include_case_context: true }, 90000);
+      setLegislationResult(response?.data || null);
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to prepare legislation research."); }
+    finally { setLegislationBusy(false); }
+  };
+
+  const saveLegislationReference = async () => {
+    if (!legislationAct.trim() || !legislationUrl.trim()) return setWorkspaceError("Act and official NSW legislation URL are required.");
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/legislation/references`, {
+      act: legislationAct, section: legislationSection, title: legislationTitle, source_url: legislationUrl, summary: legislationSummary,
+    });
+    if (updated) { setLegislationAct(""); setLegislationSection(""); setLegislationTitle(""); setLegislationUrl(""); setLegislationSummary(""); }
+  };
+
+  const confirmInterviewOutcome = async (outcome) => {
+    if (!activeInterview?.id) return;
+    setWorkspaceBusy(true); setWorkspaceError("");
+    try {
+      const label = outcome?.title || outcome?.outcome || outcome?.action || String(outcome || "");
+      const response = await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/interviews/${activeInterview.id}/decision`, { outcome: label, notes: outcomeNotes });
+      applyWorkspaceCase(response?.data); setOutcomeNotes("");
+      const fresh = (response?.data?.interviews || []).find((x)=>x.id===activeInterview.id); if (fresh) setActiveInterview(fresh);
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to confirm interview outcome."); }
+    finally { setWorkspaceBusy(false); }
+  };
+
+  const adoptRecommendation = async (rec) => {
+    setWorkspaceBusy(true); setWorkspaceError("");
+    try {
+      const type = ["gap","lead"].includes(String(rec.action_type || "").toLowerCase()) ? String(rec.action_type).toLowerCase() : "task";
+      const response = await sccRemoteRequest("POST", `/cases/${getCaseKey(selectedCase)}/recommendations/adopt`, {
+        action_type: type, title: rec.title || "SCC recommended follow-up", detail: rec.why || "", linked_record: rec.linked_record || "", priority: rec.priority || "routine",
+      });
+      applyWorkspaceCase(response?.data);
+      setWorkspaceTab(type === "gap" ? "gaps" : type === "lead" ? "leads" : "tasks");
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to adopt SCC recommendation."); }
+    finally { setWorkspaceBusy(false); }
   };
 
   const markAllNotificationsRead = async () => {
@@ -2002,6 +2083,10 @@ export default function Dashboard() {
   };
 
   const openCaseDetail = async (caseData) => {
+    setFollowUpRecommendations([]);
+    setWorkspaceError("");
+    setWorkspaceTab("overview");
+    setWorkspaceHubOpen(false);
     setSelectedCase(caseData);
     primeCommandReview(caseData);
     setCaseNote("");
@@ -2051,6 +2136,10 @@ export default function Dashboard() {
 
   const closeCaseDetail = () => {
     setIsDetailOpen(false);
+    setWorkspaceHubOpen(false);
+    setWorkspaceTab("overview");
+    setWorkspaceError("");
+    setFollowUpRecommendations([]);
     setSelectedCase(null);
     setCaseNote("");
     setCaseNoteError("");
@@ -2143,6 +2232,11 @@ export default function Dashboard() {
       )
     );
     setSelectedCase(approvedCase);
+    setCommandChangeMode("no");
+    setReviewActionError("");
+    setFollowUpRecommendations([]);
+    setWorkspaceTab("overview");
+    setWorkspaceHubOpen(false);
     playSuccessSound();
 
     const backendKey = getCaseKey(selectedCase);
@@ -2879,7 +2973,7 @@ export default function Dashboard() {
                 <Bell className="h-4 w-4" />
                 {notifications.filter((item)=>!item.read).length > 0 && <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-[#d4b25a] text-[#07101b] text-[9px] font-bold flex items-center justify-center">{Math.min(99,notifications.filter((item)=>!item.read).length)}</span>}
               </button>
-              {notificationsOpen && <div className="absolute right-0 top-11 z-50 w-[340px] max-w-[85vw] rounded-xl border border-[#294766] bg-[#081726]/98 shadow-2xl p-3"><div className="flex items-center justify-between"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">SCC Notifications</p><button onClick={markAllNotificationsRead} className="text-[9px] font-mono uppercase text-[#7186a0]">Mark all read</button></div><div className="mt-3 max-h-80 overflow-auto space-y-2">{notifications.length ? notifications.map((item)=><button key={item.id} onClick={()=>{const found=cases.find((c)=>c.id===item.case_uid);if(found){setSelectedCase(found);setIsDetailOpen(true);}setNotificationsOpen(false);}} className={`w-full text-left rounded-lg border p-3 ${item.read ? "border-[#1b324d]" : "border-[#665522] bg-[#2d2510]/20"}`}><p className="text-xs font-semibold text-white">{item.title}</p><p className="mt-1 text-[10px] text-[#8ba0bd]">{item.message}</p></button>) : <p className="py-6 text-center text-xs text-[#607793]">No notifications.</p>}</div></div>}
+              {notificationsOpen && <div className="absolute right-0 top-11 z-[90] w-[380px] max-w-[92vw] rounded-2xl border border-[#315473] bg-[#06111d] shadow-[0_24px_70px_rgba(0,0,0,0.78)] ring-1 ring-black/40 p-3.5"><div className="flex items-center justify-between gap-3 border-b border-[#1b324d] pb-3"><div><p className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#d4b25a]">SCC Notifications</p><p className="mt-1 text-[10px] text-[#7186a0]">Assignments, decisions and case updates</p></div><button onClick={markAllNotificationsRead} className="px-2.5 py-1.5 rounded-lg border border-[#2b4265] bg-[#0d1b2a] text-[9px] font-mono uppercase text-[#a9b8ca] hover:text-white">Mark all read</button></div><div className="mt-3 max-h-[420px] overflow-auto space-y-2">{notifications.length ? notifications.map((item)=><button key={item.id} onClick={()=>{const found=cases.find((c)=>c.id===item.case_uid || c.backend_id===item.case_uid || c.case_id===item.case_id);if(found){openCaseDetail(found);}setNotificationsOpen(false);}} className={`w-full text-left rounded-xl border p-3.5 transition ${item.read ? "border-[#1b324d] bg-[#0a1827] hover:bg-[#0e2135]" : "border-[#8a7638] bg-[#2b2412] shadow-[inset_3px_0_0_#d4b25a] hover:bg-[#342b14]"}`}><div className="flex items-start justify-between gap-3"><p className="text-xs font-semibold text-white leading-5">{item.title}</p>{!item.read && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#d4b25a] shadow-[0_0_12px_rgba(212,178,90,0.8)]"/>}</div><p className="mt-1.5 text-[11px] leading-4 text-[#b4c2d3]">{item.message}</p>{item.created_at && <p className="mt-2 text-[9px] font-mono uppercase text-[#607793]">{formatDate(item.created_at)}</p>}</button>) : <p className="py-8 text-center text-xs text-[#7186a0]">No notifications.</p>}</div></div>}
             </div>
 
             <button
@@ -3649,7 +3743,8 @@ export default function Dashboard() {
                 )}
 
               {isUserAdmin &&
-                String(selectedCase.status || "").toLowerCase() === "pending" && (
+                String(selectedCase.status || "").toLowerCase() === "pending" &&
+                !selectedCase.workspace_unlocked && (
                   <div className="mt-7 rounded-xl border border-[#665522] bg-[#2d2510]/35 p-5">
                     <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#d4b25a]">
                       Command Review
@@ -3803,11 +3898,19 @@ export default function Dashboard() {
                   </div>
                 )}
 
-              {(["opened", "closed"].includes(String(selectedCase.status || "").toLowerCase()) || selectedCase.workspace_unlocked) && (
-                <div className="mt-7 rounded-xl border border-[#1b324d]/80 bg-[#0b1828]/65 p-4">
+              {(["opened", "closed"].includes(String(selectedCase.status || "").toLowerCase()) || selectedCase.workspace_unlocked) && workspaceHubOpen && (
+                <div className="fixed right-4 md:right-6 bottom-24 z-[80] w-[min(1040px,calc(100vw-2rem))] max-h-[82vh] overflow-y-auto rounded-2xl border border-[#315473] bg-[#071523]/[0.995] shadow-[0_28px_90px_rgba(0,0,0,0.72)] backdrop-blur-2xl p-4 md:p-5">
+                  <div className="sticky top-0 z-20 -mx-4 md:-mx-5 -mt-4 md:-mt-5 mb-4 px-4 md:px-5 py-4 border-b border-[#294766] bg-[#081726]/[0.995] backdrop-blur-2xl flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#d4b25a]">SCC Investigation Hub</p>
+                      <p className="mt-1 text-sm font-semibold text-white truncate">{selectedCase.case_id} · {selectedCase.name}</p>
+                      <p className="mt-1 text-[10px] text-[#7186a0]">Investigation tools, AI interviews, legislation, briefings and case activity in one place.</p>
+                    </div>
+                    <button type="button" onClick={()=>setWorkspaceHubOpen(false)} className="shrink-0 p-2 rounded-xl border border-[#2b4265] bg-[#10233a] text-[#9aabc0] hover:text-white" title="Close SCC Hub"><X className="h-5 w-5"/></button>
+                  </div>
                   <div className="flex flex-wrap gap-2 border-b border-[#1b324d]/80 pb-3">
-                    {["overview","log","evidence","gaps","leads","tasks","interviews","personnel","activity","requests", ...(isUserAdmin ? ["command"] : [])].map((tab) => (
-                      <button key={tab} type="button" onClick={() => { setWorkspaceTab(tab); setWorkspaceError(""); }} className={`px-3 py-2 rounded-lg text-[10px] font-mono uppercase tracking-wider border ${workspaceTab === tab ? "border-[#d4b25a]/70 bg-[#d4b25a] text-[#07101b]" : "border-[#2b4265] bg-[#10233a]/60 text-[#9aabc0]"}`}>{tab}</button>
+                    {["overview","log","evidence","gaps","leads","tasks","interviews","legislation","briefing","operations","personnel","activity","requests", ...(isUserAdmin ? ["command"] : [])].map((tab) => (
+                      <button key={tab} type="button" onClick={() => { setWorkspaceTab(tab); setWorkspaceError(""); }} className={`px-3 py-2 rounded-lg text-[10px] font-mono uppercase tracking-wider border ${workspaceTab === tab ? "border-[#d4b25a]/70 bg-[#d4b25a] text-[#07101b]" : "border-[#2b4265] bg-[#10233a]/60 text-[#9aabc0]"}`}>{tab === "log" ? "Investigation Log" : tab === "gaps" ? "Info Gaps" : tab === "briefing" ? "Briefing Maker" : tab}</button>
                     ))}
                   </div>
                   {workspaceError && <div className="mt-3 rounded-lg border border-[#6b2929] bg-[#2a1414]/60 p-3 text-xs text-[#f4a6a6]">{workspaceError}</div>}
@@ -3818,7 +3921,7 @@ export default function Dashboard() {
                     <div className="md:col-span-2 rounded-xl border border-[#1b324d] p-3"><span className="text-[#7186a0]">Investigation Objective</span><p className="mt-1 whitespace-pre-wrap">{selectedCase.investigation_objective || "—"}</p></div>
                     <div className="md:col-span-2 rounded-xl border border-[#665522]/70 bg-[#2d2510]/25 p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-mono uppercase tracking-wider text-[#d4b25a]">SCC Case Intelligence</p><p className="mt-1 text-xs text-[#8ba0bd]">Analyse the current Case File and recommend the strongest next investigative actions.</p></div><button disabled={aiBusy} onClick={()=>getNextActions("manual")} className="px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase inline-flex items-center gap-2"><BrainCircuit className="h-4 w-4" />{aiBusy ? "Analysing..." : "What should I do next?"}</button></div>
-                      {!!followUpRecommendations.length && <div className="mt-4 space-y-2">{followUpRecommendations.map((rec,index)=><div key={`${rec.title}-${index}`} className="rounded-lg border border-[#1b324d] bg-[#07111d]/70 p-3"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">{rec.priority || "routine"} · {rec.action_type || "review"}</p><p className="mt-1 text-sm font-semibold text-white">{rec.title}</p><p className="mt-1 text-xs text-[#9aabc0]">{rec.why}</p>{rec.linked_record && <p className="mt-1 text-[10px] font-mono text-[#607793]">Linked: {rec.linked_record}</p>}</div>)}</div>}
+                      {!!followUpRecommendations.length && <div className="mt-4 space-y-2">{followUpRecommendations.map((rec,index)=><div key={`${rec.title}-${index}`} className="rounded-lg border border-[#1b324d] bg-[#07111d]/70 p-3"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">{rec.priority || "routine"} · {rec.action_type || "review"}</p><p className="mt-1 text-sm font-semibold text-white">{rec.title}</p><p className="mt-1 text-xs text-[#9aabc0]">{rec.why}</p>{rec.linked_record && <p className="mt-1 text-[10px] font-mono text-[#607793]">Linked: {rec.linked_record}</p>}<button disabled={workspaceBusy} onClick={()=>adoptRecommendation(rec)} className="mt-3 px-3 py-1.5 rounded-lg border border-[#2b4265] text-[10px] font-bold uppercase text-[#d8e1ec]">Adopt as {String(rec.action_type || "task").toLowerCase()==="gap" ? "Gap" : String(rec.action_type || "").toLowerCase()==="lead" ? "Lead" : "Task"}</button></div>)}</div>}
                     </div>
                   </div>}
 
@@ -3865,12 +3968,28 @@ export default function Dashboard() {
                       <div className="grid lg:grid-cols-3 gap-3"><div className="lg:col-span-2 rounded-xl border border-[#1b324d] p-4"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Live Transcript</p><div className={`text-[10px] font-mono uppercase ${isInterviewRecording ? "text-[#f08080]" : "text-[#7186a0]"}`}>{isInterviewRecording ? "● Recording / Listening" : "Ready"}</div></div><textarea value={interviewTranscript} onChange={(e)=>{setInterviewTranscript(e.target.value);liveTranscriptRef.current=e.target.value;}} className={`${INPUT_CLASS} mt-3 min-h-[240px] font-mono text-xs`} placeholder="Live transcript appears here. You can correct Roblox names/callsigns before continuing."/><div className="mt-3 flex flex-wrap gap-2">{!isInterviewRecording ? <button onClick={startInterviewRecording} className="px-4 py-2 rounded-xl border border-[#245d3d] bg-[#0f2e1e]/80 text-[#79e0a4] text-xs font-bold uppercase inline-flex items-center gap-2"><Mic className="h-4 w-4"/>Start Interview</button> : <button onClick={stopInterviewRecording} className="px-4 py-2 rounded-xl border border-[#6b2929] bg-[#2a1414]/80 text-[#f08080] text-xs font-bold uppercase inline-flex items-center gap-2"><Square className="h-4 w-4"/>Stop Recording</button>}<button disabled={!interviewTranscript.trim() || aiBusy} onClick={()=>requestLiveInterviewTurn(interviewTranscript,"Generate a different useful question")} className="px-4 py-2 rounded-xl border border-[#2b4265] text-xs font-bold uppercase text-white">Different Question</button></div></div>
                       <div className="rounded-xl border border-[#1b324d] p-4"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Interview Objectives</p><div className="mt-3 space-y-2">{(activeInterview.objectives || []).map((obj)=><div key={obj.id || obj.label} className="text-xs text-[#b8c6d7]"><span className="text-[#d4b25a]">○</span> {obj.label || obj.question}</div>)}</div></div></div>
                       <div className="rounded-xl border border-[#d4b25a]/40 bg-[#172234]/80 p-4"><p className="text-[10px] font-mono uppercase tracking-wider text-[#d4b25a]">Next Suggested Line</p><p className="mt-3 text-lg font-semibold leading-7 text-white">“{liveInterviewAnalysis?.next_question || activeInterview.next_question}”</p>{liveInterviewAnalysis?.why && <p className="mt-2 text-xs text-[#9aabc0]"><span className="text-[#d4b25a]">WHY:</span> {liveInterviewAnalysis.why}</p>}{Array.isArray(liveInterviewAnalysis?.alternate_questions) && !!liveInterviewAnalysis.alternate_questions.length && <div className="mt-3 space-y-1">{liveInterviewAnalysis.alternate_questions.map((q,i)=><button key={i} onClick={()=>setLiveInterviewAnalysis((current)=>({...current,next_question:q}))} className="block text-left text-xs text-[#8ba0bd] hover:text-white">Alternate: {q}</button>)}</div>}</div>
-                      {interviewAssessment && <div className="rounded-xl border border-[#245d3d] bg-[#0f2e1e]/25 p-4"><p className="text-[10px] font-mono uppercase tracking-wider text-[#79e0a4]">SCC Post-Interview Assessment</p><p className="mt-3 whitespace-pre-wrap text-sm text-white">{interviewAssessment.account_summary || "Assessment completed."}</p>{Array.isArray(interviewAssessment.potential_legal_issues) && interviewAssessment.potential_legal_issues.length > 0 && <div className="mt-4"><p className="text-[10px] font-mono uppercase text-[#f0d67a]">Potential Legal Issues — Verify Current Legislation</p>{interviewAssessment.potential_legal_issues.map((issue,i)=><div key={i} className="mt-2 rounded-lg border border-[#665522] p-3 text-xs text-[#d8e1ec]">{typeof issue === "string" ? issue : issue.summary || issue.issue || JSON.stringify(issue)}</div>)}</div>}{Array.isArray(interviewAssessment.recommended_outcomes) && interviewAssessment.recommended_outcomes.length > 0 && <div className="mt-4"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Recommended Next Actions · Human Confirmation Required</p>{interviewAssessment.recommended_outcomes.map((outcome,i)=><div key={i} className="mt-2 rounded-lg border border-[#1b324d] p-3"><p className="text-sm font-semibold text-white">{outcome.title || outcome.outcome || `Recommendation ${i+1}`}</p><p className="mt-1 text-xs text-[#9aabc0]">{outcome.why || outcome.reason || "Review against the Case File before confirming action."}</p></div>)}</div>}</div>}
+                      {interviewAssessment && <div className="rounded-xl border border-[#245d3d] bg-[#0f2e1e]/25 p-4"><p className="text-[10px] font-mono uppercase tracking-wider text-[#79e0a4]">SCC Post-Interview Assessment</p><p className="mt-3 whitespace-pre-wrap text-sm text-white">{interviewAssessment.account_summary || "Assessment completed."}</p>{Array.isArray(interviewAssessment.potential_legal_issues) && interviewAssessment.potential_legal_issues.length > 0 && <div className="mt-4"><p className="text-[10px] font-mono uppercase text-[#f0d67a]">Potential Legal Issues — Verify Current Legislation</p>{interviewAssessment.potential_legal_issues.map((issue,i)=><div key={i} className="mt-2 rounded-lg border border-[#665522] p-3 text-xs text-[#d8e1ec]">{typeof issue === "string" ? issue : issue.summary || issue.issue || JSON.stringify(issue)}</div>)}</div>}{Array.isArray(interviewAssessment.recommended_outcomes) && interviewAssessment.recommended_outcomes.length > 0 && <div className="mt-4"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Recommended Next Actions · Human Confirmation Required</p><textarea value={outcomeNotes} onChange={(e)=>setOutcomeNotes(e.target.value)} className={`${INPUT_CLASS} mt-2 min-h-[60px]`} placeholder="Optional investigator/Command decision notes"/>{interviewAssessment.recommended_outcomes.map((outcome,i)=><div key={i} className="mt-2 rounded-lg border border-[#1b324d] p-3"><p className="text-sm font-semibold text-white">{outcome.title || outcome.outcome || `Recommendation ${i+1}`}</p><p className="mt-1 text-xs text-[#9aabc0]">{outcome.why || outcome.reason || "Review against the Case File before confirming action."}</p><button disabled={workspaceBusy} onClick={()=>confirmInterviewOutcome(outcome)} className="mt-3 px-3 py-1.5 rounded-lg border border-[#245d3d] text-[#79e0a4] text-[10px] font-bold uppercase">Confirm this outcome</button></div>)}</div>}</div>}
                     </div>}
                     {(selectedCase.interviews || []).length > 0 && <div className="border-t border-[#1b324d] pt-4"><p className="text-[10px] font-mono uppercase text-[#607793]">Interview Record</p><div className="mt-2 space-y-2">{(selectedCase.interviews || []).slice().reverse().map((item)=><button key={item.id} onClick={()=>{setActiveInterview(item);setInterviewTranscript(item.transcript || "");liveTranscriptRef.current=item.transcript || "";setInterviewAssessment(item.assessment || null);setLiveInterviewAnalysis(item.last_live_analysis || null);}} className="w-full text-left rounded-lg border border-[#1b324d] p-3"><p className="text-[10px] font-mono text-[#d4b25a]">{item.id} · {item.status}</p><p className="mt-1 text-sm text-white">{item.subject_name} · {item.interview_type}</p></button>)}</div></div>}
                   </div>}
 
-                  {workspaceTab === "personnel" && <div className="mt-4 space-y-3"><p className="text-xs text-[#7186a0]">Lead: <span className="text-white">{selectedCase.lead_investigator}</span></p>{(selectedCase.assigned_investigators || []).map((name)=><div key={name} className="rounded-lg border border-[#1b324d] px-3 py-2 text-sm text-[#d8e1ec]">{name}</div>)}{isUserAdmin && <div className="flex gap-2"><input value={personnelName} onChange={(e)=>setPersonnelName(e.target.value)} className={INPUT_CLASS} placeholder="Investigator / callsign"/><button onClick={assignInvestigator} className="px-4 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Assign</button></div>}</div>}
+                  {workspaceTab === "operations" && <div className="mt-4 space-y-4">
+                    {!(selectedCase.operations || []).length && <div className="rounded-xl border border-[#1b324d] p-5 text-center text-xs text-[#7186a0]">No Command operations have been planned for this Case File.</div>}
+                    {(selectedCase.operations || []).slice().reverse().map((op)=><div key={op.id} className={`rounded-xl border p-4 ${op.status === "active" ? "border-[#665522] bg-[#2d2510]/20" : "border-[#1b324d] bg-[#07111d]/70"}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">{op.id} · {op.status}</p><p className="mt-1 text-sm font-semibold text-white">{op.operation_type}</p></div>{op.started_at && <p className="text-[10px] text-[#7186a0]">Started {formatDate(op.started_at)}</p>}</div>
+                      {op.briefing && <div className="mt-3 grid md:grid-cols-2 gap-2 text-xs"><div className="rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Situation</span><p className="mt-1 text-[#d8e1ec]">{op.briefing.situation || "—"}</p></div><div className="rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Objective</span><p className="mt-1 text-[#d8e1ec]">{op.briefing.operational_objective || "—"}</p></div></div>}
+                      {op.status === "active" && <div className="mt-4 border-t border-[#1b324d] pt-4 space-y-3"><div className="grid md:grid-cols-2 gap-3"><input value={operationQuickLog} onChange={(e)=>setOperationQuickLog(e.target.value)} className={INPUT_CLASS} placeholder="Quick Log — what happened?"/><input value={operationQuickInfo} onChange={(e)=>setOperationQuickInfo(e.target.value)} className={INPUT_CLASS} placeholder="Information / evidence obtained"/></div><div className="flex flex-wrap gap-2"><button onClick={()=>quickLogOperation(op.id)} disabled={workspaceBusy} className="px-3 py-2 rounded-lg border border-[#2b4265] text-[10px] font-bold uppercase text-white">Quick Log</button><button onClick={()=>setWorkspaceTab("evidence")} className="px-3 py-2 rounded-lg border border-[#2b4265] text-[10px] font-bold uppercase text-[#8ba0bd]">Open Evidence Register</button></div><div className="rounded-lg border border-[#1b324d] p-3"><p className="text-[10px] font-mono uppercase text-[#607793]">Quick Evidence · linked to {op.id}</p><div className="mt-2 grid md:grid-cols-2 gap-2"><select value={evidenceType} onChange={(e)=>setEvidenceType(e.target.value)} className={INPUT_CLASS}><option>Screenshot / Image</option><option>Video / Clip</option><option>Document</option><option>Written Information</option><option>Other</option></select>{evidenceType !== "Written Information" && <input type="file" onChange={(e)=>setEvidenceFile(e.target.files?.[0] || null)} className={INPUT_CLASS}/>}</div><textarea value={evidenceDescription} onChange={(e)=>setEvidenceDescription(e.target.value)} className={`${INPUT_CLASS} mt-2 min-h-[60px]`} placeholder="Evidence description"/><button onClick={()=>uploadCaseEvidence(op.id)} disabled={workspaceBusy} className="mt-2 px-3 py-2 rounded-lg border border-[#245d3d] text-[#79e0a4] text-[10px] font-bold uppercase">Save Quick Evidence</button></div><div className="grid md:grid-cols-3 gap-3 pt-2"><textarea value={operationDebriefOutcome} onChange={(e)=>setOperationDebriefOutcome(e.target.value)} className={`${INPUT_CLASS} min-h-[80px]`} placeholder="End Operation — outcome *"/><textarea value={operationDebriefEvidence} onChange={(e)=>setOperationDebriefEvidence(e.target.value)} className={`${INPUT_CLASS} min-h-[80px]`} placeholder="Evidence / information obtained"/><textarea value={operationDebriefUnresolved} onChange={(e)=>setOperationDebriefUnresolved(e.target.value)} className={`${INPUT_CLASS} min-h-[80px]`} placeholder="Unresolved matters"/></div><button onClick={()=>debriefOperation(op.id)} disabled={operationBusy} className="px-4 py-2 rounded-xl border border-[#6b2929] text-[#f4a6a6] text-xs font-bold uppercase">{operationBusy ? "Generating Debrief..." : "End Operation + Debrief"}</button></div>}
+                      {op.debrief && <div className="mt-4 rounded-lg border border-[#245d3d] bg-[#0f2e1e]/30 p-3"><p className="text-[10px] font-mono uppercase text-[#79e0a4]">Operation Debrief</p><p className="mt-2 text-sm text-white whitespace-pre-wrap">{op.debrief.summary || "Completed."}</p>{Array.isArray(op.debrief.follow_up_recommendations) && op.debrief.follow_up_recommendations.length>0 && <div className="mt-3 space-y-1">{op.debrief.follow_up_recommendations.map((r,i)=><p key={i} className="text-xs text-[#a9b8ca]">• {r.title || r}</p>)}</div>}</div>}
+                    </div>)}
+                  </div>}
+
+                  {workspaceTab === "legislation" && <div className="mt-4 space-y-5">
+                    <div className="rounded-xl border border-[#665522]/70 bg-[#2d2510]/20 p-4"><p className="text-[10px] font-mono uppercase text-[#d4b25a]">NSW Legislation Research</p><p className="mt-1 text-xs text-[#8ba0bd]">SCC can identify research topics from the case, but Act/section references are only treated as verified after an official legislation.nsw.gov.au source is saved.</p><div className="mt-3 flex gap-2"><input value={legislationQuery} onChange={(e)=>setLegislationQuery(e.target.value)} className={INPUT_CLASS} placeholder="e.g. firearm possession, assault, stolen vehicle"/><button disabled={legislationBusy} onClick={searchLegislation} className="px-4 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">{legislationBusy ? "Checking..." : "Research"}</button></div>{legislationResult && <div className="mt-4 space-y-2"><a href={legislationResult.official_search_url} target="_blank" rel="noreferrer" className="inline-block text-xs text-[#79aee8] underline">Open official NSW legislation search</a>{(legislationResult.search_terms || []).length>0 && <div className="flex flex-wrap gap-2">{legislationResult.search_terms.map((term,i)=><button key={i} onClick={()=>setLegislationQuery(term)} className="px-2 py-1 rounded border border-[#2b4265] text-[10px] text-[#a9b8ca]">{term}</button>)}</div>}{(legislationResult.possible_issues || []).map((issue,i)=><div key={i} className="rounded-lg border border-[#1b324d] p-3"><p className="text-sm text-white">{issue.title || issue.issue || "Potential legal research issue"}</p><p className="mt-1 text-xs text-[#8ba0bd]">{issue.why || "Verify against current NSW legislation."}</p></div>)}</div>}</div>
+                    <div className="rounded-xl border border-[#1b324d] p-4"><p className="text-[10px] font-mono uppercase text-[#607793]">Save Verified Reference</p><div className="mt-3 grid md:grid-cols-2 gap-3"><input value={legislationAct} onChange={(e)=>setLegislationAct(e.target.value)} className={INPUT_CLASS} placeholder="Act *"/><input value={legislationSection} onChange={(e)=>setLegislationSection(e.target.value)} className={INPUT_CLASS} placeholder="Section"/><input value={legislationTitle} onChange={(e)=>setLegislationTitle(e.target.value)} className={INPUT_CLASS} placeholder="Provision / offence title"/><input value={legislationUrl} onChange={(e)=>setLegislationUrl(e.target.value)} className={INPUT_CLASS} placeholder="Official legislation.nsw.gov.au URL *"/><textarea value={legislationSummary} onChange={(e)=>setLegislationSummary(e.target.value)} className={`${INPUT_CLASS} md:col-span-2 min-h-[70px]`} placeholder="Short verified relevance / notes"/></div><button onClick={saveLegislationReference} className="mt-3 px-4 py-2 rounded-xl border border-[#245d3d] text-[#79e0a4] text-xs font-bold uppercase">Save Verified Reference</button></div>
+                    <div className="space-y-2">{(selectedCase.legislation_references || []).map((ref)=><div key={ref.id} className="rounded-xl border border-[#1b324d] p-3"><p className="text-[10px] font-mono text-[#d4b25a]">VERIFIED · {ref.act} {ref.section}</p><p className="mt-1 text-sm text-white">{ref.title || ref.summary || "NSW legislation reference"}</p>{ref.summary && <p className="mt-1 text-xs text-[#8ba0bd]">{ref.summary}</p>}<a href={ref.source_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-[10px] uppercase text-[#79aee8] underline">Open official provision</a></div>)}</div>
+                  </div>}
+
+                  {workspaceTab === "personnel" && <div className="mt-4 space-y-3"><p className="text-xs text-[#7186a0]">Lead: <span className="text-white">{selectedCase.lead_investigator}</span></p>{(selectedCase.assigned_investigators || []).map((name)=><div key={name} className="rounded-lg border border-[#1b324d] px-3 py-2 text-sm text-[#d8e1ec] flex items-center justify-between gap-2"><span>{name}</span>{isUserAdmin && <button onClick={async()=>{try{const r=await sccRemoteRequest("DELETE",`/cases/${getCaseKey(selectedCase)}/personnel/${encodeURIComponent(name)}`);applyWorkspaceCase(r?.data);}catch(e){setWorkspaceError(e?.response?.data?.detail || "Unable to remove investigator.");}}} className="text-[10px] uppercase text-[#f08080]">Remove</button>}</div>)}{isUserAdmin && <div className="flex gap-2"><input value={personnelName} onChange={(e)=>setPersonnelName(e.target.value)} className={INPUT_CLASS} placeholder="Investigator / callsign"/><button onClick={assignInvestigator} className="px-4 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Assign</button></div>}</div>}
 
                   {workspaceTab === "activity" && <div className="mt-4 space-y-2">{(selectedCase.activity_log || []).slice().reverse().map((item)=><div key={item.id} className="rounded-lg border border-[#1b324d] px-3 py-2"><p className="text-[10px] font-mono text-[#8ba0bd]">{formatDate(item.created_at)} · {item.actor}</p><p className="mt-1 text-xs text-white">{item.action}</p>{item.detail && <p className="text-xs text-[#7186a0]">{item.detail}</p>}</div>)}</div>}
 
@@ -3881,13 +4000,27 @@ export default function Dashboard() {
                     {selectedCase.closure_request && <div className="rounded-xl border border-[#665522] bg-[#2d2510]/30 p-3"><p className="text-[10px] font-mono text-[#d4b25a]">Closure Request · {selectedCase.closure_request.status}</p><p className="mt-2 text-sm text-white">{selectedCase.closure_request.outcome_summary}</p>{isUserAdmin && selectedCase.closure_request.status === "pending" && <div className="mt-2 flex gap-3"><button onClick={()=>decideClosure("approve")} className="text-xs text-[#79e0a4]">Approve Closure</button><button onClick={()=>decideClosure("return")} className="text-xs text-[#d4b25a]">Return to Investigator</button></div>}</div>}
                   </div>}
 
+                  {workspaceTab === "briefing" && <div className="mt-4 space-y-5">
+                    <div className="rounded-xl border border-[#665522]/70 bg-[#2d2510]/20 p-4">
+                      <div className="flex items-center gap-2"><Target className="h-5 w-5 text-[#d4b25a]"/><div><p className="text-sm font-bold uppercase text-white">SCC Briefing Maker</p><p className="text-[10px] font-mono uppercase text-[#607793]">Available to Detectives and Command · Case context automatically loaded</p></div></div>
+                      <p className="mt-3 text-xs leading-relaxed text-[#9aabc0]">Generate a case-grounded operational briefing. Detectives can prepare briefings; only Command can formally start a planned operation.</p>
+                      <div className="mt-4 grid md:grid-cols-2 gap-3"><select value={operationType} onChange={(e)=>setOperationType(e.target.value)} className={INPUT_CLASS}><option>Surveillance</option><option>Arrest Operation</option><option>Search / Evidence Recovery</option><option>Person Locate</option><option>Vehicle Locate</option><option>Interview Operation</option><option>Intelligence Gathering</option><option>Coordinated Enforcement</option><option>Custom Operation</option></select><input value={operationObjective} onChange={(e)=>setOperationObjective(e.target.value)} className={INPUT_CLASS} placeholder="Optional objective override"/><textarea value={operationInstructions} onChange={(e)=>setOperationInstructions(e.target.value)} className={`${INPUT_CLASS} md:col-span-2 min-h-[90px]`} placeholder="Instructions or circumstances SCC cannot derive from the Case File"/></div>
+                      <button disabled={operationBusy} onClick={planOperation} className="mt-3 px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">{operationBusy ? "Generating Briefing..." : "Generate Case Briefing"}</button>
+                    </div>
+                    {(selectedCase.operations || []).filter((op)=>op.status === "planned").slice().reverse().map((op)=><div key={op.id} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-mono text-[#d4b25a]">{op.id} · {op.status}</p><p className="mt-1 text-sm font-semibold text-white">{op.operation_type}</p></div>{isUserAdmin && <button onClick={()=>startOperation(op.id)} className="px-3 py-2 rounded-lg border border-[#245d3d] text-[#79e0a4] text-[10px] font-bold uppercase inline-flex items-center gap-2"><Play className="h-3 w-3"/>Start Operation</button>}</div>{op.briefing && <div className="mt-3 grid md:grid-cols-2 gap-2 text-xs text-[#a9b8ca]"><div className="rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Situation</span><p className="mt-1 text-white">{op.briefing.situation || "—"}</p></div><div className="rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Operational Objective</span><p className="mt-1 text-white">{op.briefing.operational_objective || "—"}</p></div><div className="md:col-span-2 rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Operational Plan</span><p className="mt-1 whitespace-pre-wrap text-white">{typeof op.briefing.operational_plan === "string" ? op.briefing.operational_plan : JSON.stringify(op.briefing.operational_plan)}</p></div></div>}</div>)}
+                  </div>}
+
                   {workspaceTab === "command" && isUserAdmin && <div className="mt-4 space-y-5">
                     <div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Command Flags</p><div className="mt-2 flex flex-wrap gap-2">{["Command Attention","Restricted","Urgent Review"].map((flag)=><button key={flag} onClick={()=>toggleCommandFlag(flag)} className={`px-3 py-2 rounded-lg border text-[10px] uppercase ${selectedCase.command_flags?.includes(flag) ? "border-[#d4b25a] text-[#d4b25a]" : "border-[#2b4265] text-[#8ba0bd]"}`}>{flag}</button>)}</div></div>
                     <div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Private Command Notes</p><textarea value={commandNote} onChange={(e)=>setCommandNote(e.target.value)} className={`${INPUT_CLASS} mt-2 min-h-[80px]`} placeholder="Visible to Command only"/><button onClick={addCommandNote} className="mt-2 px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Add Command Note</button><div className="mt-3 space-y-2">{(selectedCase.command_notes || []).slice().reverse().map((note)=><div key={note.id} className="rounded-lg border border-[#665522]/50 p-3"><p className="text-xs text-white">{note.note}</p><p className="mt-1 text-[10px] text-[#7186a0]">{note.author} · {formatDate(note.created_at)}</p></div>)}</div></div>
-                    <div className="border-t border-[#1b324d] pt-5"><div className="flex items-center gap-2"><Target className="h-5 w-5 text-[#d4b25a]"/><div><p className="text-sm font-bold uppercase text-white">Operation Planner</p><p className="text-[10px] font-mono uppercase text-[#607793]">Case context automatically loaded</p></div></div><div className="mt-4 grid md:grid-cols-2 gap-3"><select value={operationType} onChange={(e)=>setOperationType(e.target.value)} className={INPUT_CLASS}><option>Surveillance</option><option>Arrest Operation</option><option>Search / Evidence Recovery</option><option>Person Locate</option><option>Vehicle Locate</option><option>Interview Operation</option><option>Intelligence Gathering</option><option>Coordinated Enforcement</option><option>Custom Operation</option></select><input value={operationObjective} onChange={(e)=>setOperationObjective(e.target.value)} className={INPUT_CLASS} placeholder="Optional objective override"/><textarea value={operationInstructions} onChange={(e)=>setOperationInstructions(e.target.value)} className={`${INPUT_CLASS} md:col-span-2 min-h-[90px]`} placeholder="Command instructions SCC cannot derive from the Case File"/></div><button disabled={operationBusy} onClick={planOperation} className="mt-3 px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">{operationBusy ? "Generating Briefing..." : "Generate Operation Briefing"}</button></div>
-                    {(selectedCase.operations || []).slice().reverse().map((op)=><div key={op.id} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-mono text-[#d4b25a]">{op.id} · {op.status}</p><p className="mt-1 text-sm font-semibold text-white">{op.operation_type}</p></div>{op.status === "planned" && <button onClick={()=>startOperation(op.id)} className="px-3 py-2 rounded-lg border border-[#245d3d] text-[#79e0a4] text-[10px] font-bold uppercase inline-flex items-center gap-2"><Play className="h-3 w-3"/>Start Operation</button>}</div>{op.briefing && <div className="mt-3 grid md:grid-cols-2 gap-2 text-xs text-[#a9b8ca]"><div className="rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Situation</span><p className="mt-1 text-white">{op.briefing.situation || "—"}</p></div><div className="rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Operational Objective</span><p className="mt-1 text-white">{op.briefing.operational_objective || "—"}</p></div><div className="md:col-span-2 rounded-lg border border-[#1b324d] p-3"><span className="text-[#7186a0]">Operational Plan</span><p className="mt-1 whitespace-pre-wrap text-white">{typeof op.briefing.operational_plan === "string" ? op.briefing.operational_plan : JSON.stringify(op.briefing.operational_plan)}</p></div></div>}</div>)}
                   </div>}
                 </div>
+              )}
+
+              {(["opened", "closed"].includes(String(selectedCase.status || "").toLowerCase()) || selectedCase.workspace_unlocked) && (
+                <button type="button" onClick={()=>setWorkspaceHubOpen((open)=>!open)} className="fixed right-5 md:right-7 bottom-5 z-[85] min-w-[190px] px-5 py-3.5 rounded-2xl border border-[#d4b25a]/60 bg-[#0b1d31] shadow-[0_18px_55px_rgba(0,0,0,0.62)] text-left hover:bg-[#102840] transition">
+                  <span className="flex items-center gap-3"><BrainCircuit className="h-5 w-5 text-[#d4b25a]"/><span><span className="block text-[10px] font-mono uppercase tracking-[0.18em] text-[#d4b25a]">SCC Investigation Hub</span><span className="block mt-0.5 text-xs font-semibold text-white">{workspaceHubOpen ? "Close investigation tools" : "Open investigation tools"}</span></span></span>
+                </button>
               )}
 
               <div className="mt-8 pt-7 border-t border-[#1b324d]/80">

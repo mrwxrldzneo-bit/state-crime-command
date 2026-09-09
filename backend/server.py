@@ -2039,6 +2039,38 @@ class OperationDebriefRequest(BaseModel):
     unresolved_matters: str = ""
 
 
+class OperationQuickLogRequest(BaseModel):
+    action_taken: str
+    information_obtained: str = ""
+    outcome_further_action: str = ""
+
+
+class LegislationSearchRequest(BaseModel):
+    query: str = ""
+    include_case_context: bool = True
+
+
+class LegislationReferenceCreate(BaseModel):
+    act: str
+    section: str = ""
+    title: str = ""
+    source_url: str
+    summary: str = ""
+
+
+class InterviewOutcomeDecision(BaseModel):
+    outcome: str
+    notes: str = ""
+
+
+class RecommendationAdoptRequest(BaseModel):
+    action_type: str
+    title: str
+    detail: str = ""
+    linked_record: str = ""
+    priority: str = "routine"
+
+
 class NotificationReadRequest(BaseModel):
     notification_ids: List[str] = Field(default_factory=list)
 
@@ -2080,6 +2112,7 @@ class Case(BaseModel):
     interviews: List[dict] = Field(default_factory=list)
     operations: List[dict] = Field(default_factory=list)
     ai_recommendations: List[dict] = Field(default_factory=list)
+    legislation_references: List[dict] = Field(default_factory=list)
     command_adjusted_by: Optional[str] = None
     command_adjusted_at: Optional[str] = None
 
@@ -3597,6 +3630,7 @@ def build_case_context(doc: dict) -> dict:
         "tasks": doc.get("tasks") or [],
         "interviews": [{k: v for k, v in item.items() if k != "recording_file_id"} for item in (doc.get("interviews") or [])],
         "operations": doc.get("operations") or [],
+        "legislation_references": doc.get("legislation_references") or [],
         "activity_log": (doc.get("activity_log") or [])[-75:],
         "assigned_investigators": doc.get("assigned_investigators") or [],
     }
@@ -3605,6 +3639,42 @@ async def create_notification(username: str, title: str, message: str, case_uid:
     if not username:
         return
     await db.notifications.insert_one({"id": str(uuid.uuid4()), "username": username, "title": title, "message": message, "case_uid": case_uid, "kind": kind, "read": False, "created_at": now_iso()})
+
+async def ensure_overdue_task_notifications(username: str):
+    now = datetime.now(timezone.utc)
+    cursor = db.cases.find(
+        {"tasks": {"$elemMatch": {"assigned_to": username, "status": {"$ne": "completed"}, "due_at": {"$nin": ["", None]}}}},
+        {"_id": 0, "id": 1, "case_id": 1, "tasks": 1},
+    )
+    async for case in cursor:
+        for task in case.get("tasks") or []:
+            if task.get("assigned_to") != username or str(task.get("status", "open")).lower() == "completed":
+                continue
+            raw_due = str(task.get("due_at") or "").strip()
+            if not raw_due:
+                continue
+            try:
+                due = datetime.fromisoformat(raw_due.replace("Z", "+00:00"))
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+            if due >= now:
+                continue
+            fingerprint = f"overdue:{case.get('id')}:{task.get('id')}"
+            exists = await db.notifications.find_one({"username": username, "fingerprint": fingerprint}, {"_id": 1})
+            if not exists:
+                await db.notifications.insert_one({
+                    "id": str(uuid.uuid4()), "username": username,
+                    "title": f"Overdue task · {task.get('id', 'TASK')}",
+                    "message": task.get("title") or "An SCC task is overdue.",
+                    "case_uid": case.get("id", ""), "kind": "overdue", "read": False,
+                    "created_at": now_iso(), "fingerprint": fingerprint,
+                })
+
+
+def _official_legislation_search_url() -> str:
+    return "https://legislation.nsw.gov.au/search/inforce"
 
 async def _call_scc_ai(system_prompt: str, user_payload: dict) -> Optional[dict]:
     if not (SCC_AI_API_URL and SCC_AI_API_KEY and SCC_AI_MODEL):
@@ -3693,6 +3763,7 @@ async def upload_evidence(case_uid: str, request: Request, user: dict = Depends(
     filename = request.headers.get("x-scc-filename", "evidence-file").strip()[:180]
     evidence_type = request.headers.get("x-scc-evidence-type", "Other").strip()[:80]
     description = request.headers.get("x-scc-description", "").strip()[:1500]
+    operation_id = request.headers.get("x-scc-operation-id", "").strip()[:80]
     content_type = request.headers.get("content-type", "application/octet-stream").split(";")[0]
     doc = await db.cases.find_one({"id": case_uid}, {"_id": 0, "case_id": 1, "evidence": 1})
     existing = doc.get("evidence") or []
@@ -3701,7 +3772,7 @@ async def upload_evidence(case_uid: str, request: Request, user: dict = Depends(
     evidence_id = f"EVD-{suffix}-{number:03d}"
     file_id = await get_evidence_fs().upload_from_stream(filename, raw, metadata={"case_uid": case_uid, "evidence_id": evidence_id, "content_type": content_type})
     ts = now_iso()
-    item = {"id": str(uuid.uuid4()), "evidence_id": evidence_id, "type": evidence_type, "description": description, "filename": filename, "content_type": content_type, "size": len(raw), "file_id": str(file_id), "uploaded_by": user["username"], "uploaded_at": ts, "removed": False}
+    item = {"id": str(uuid.uuid4()), "evidence_id": evidence_id, "type": evidence_type, "description": description, "filename": filename, "content_type": content_type, "size": len(raw), "file_id": str(file_id), "uploaded_by": user["username"], "uploaded_at": ts, "removed": False, "operation_id": operation_id}
     await db.cases.update_one({"id": case_uid}, {"$push": {"evidence": item, "activity_log": _activity(user["username"], "EVIDENCE ADDED", f"{evidence_id} · {filename}")}, "$set": {"updated_at": ts}})
     return await db.cases.find_one({"id": case_uid}, {"_id": 0})
 
@@ -3740,12 +3811,14 @@ async def assign_personnel(case_uid: str, body: PersonnelRequest, user: dict = D
         raise HTTPException(status_code=400, detail="Investigator is required.")
     ts = now_iso()
     await db.cases.update_one({"id": case_uid}, {"$addToSet": {"assigned_investigators": investigator}, "$push": {"activity_log": _activity(user["username"], "INVESTIGATOR ASSIGNED", investigator)}, "$set": {"updated_at": ts}})
+    await create_notification(investigator, "Assigned to SCC investigation", "Command assigned you to this Case File.", case_uid, "personnel")
     return await db.cases.find_one({"id": case_uid}, {"_id": 0})
 
 @api_router.delete("/cases/{case_uid}/personnel/{investigator}", response_model=Case)
 async def unassign_personnel(case_uid: str, investigator: str, user: dict = Depends(require_admin)):
     ts = now_iso()
     await db.cases.update_one({"id": case_uid}, {"$pull": {"assigned_investigators": investigator}, "$push": {"activity_log": _activity(user["username"], "INVESTIGATOR UNASSIGNED", investigator)}, "$set": {"updated_at": ts}})
+    await create_notification(investigator, "Removed from SCC investigation", "Command removed you from this Case File.", case_uid, "personnel")
     return await db.cases.find_one({"id": case_uid}, {"_id": 0})
 
 @api_router.post("/cases/{case_uid}/command-requests", response_model=Case)
@@ -3770,6 +3843,7 @@ async def decide_command_request(case_uid: str, request_id: str, body: CommandRe
     # Apply approved priority requests automatically.
     if decision == "approved" and req.get("request_type") == "priority_change" and req.get("requested_value") in PRIORITIES:
         await db.cases.update_one({"id": case_uid}, {"$set": {"priority": req["requested_value"], "updated_at": ts}})
+    await create_notification(req.get("requested_by", ""), f"Command request {decision}", body.reason.strip() or req.get("request_type", "Command request"), case_uid, "command")
     return await db.cases.find_one({"id": case_uid}, {"_id": 0})
 
 @api_router.put("/cases/{case_uid}/command-flags", response_model=Case)
@@ -3811,6 +3885,7 @@ async def decide_closure(case_uid: str, decision: str, user: dict = Depends(requ
     status = "closed" if decision == "approve" else doc.get("status", "opened")
     closure = dict(doc["closure_request"]); closure.update({"status": "approved" if decision == "approve" else "returned", "decided_by": user["username"], "decided_at": ts})
     await db.cases.update_one({"id": case_uid}, {"$set": {"closure_request": closure, "status": status, "updated_at": ts}, "$push": {"activity_log": _activity(user["username"], "CASE CLOSED" if decision == "approve" else "CLOSURE RETURNED TO INVESTIGATOR")}})
+    await create_notification(closure.get("requested_by", ""), "Case closure approved" if decision == "approve" else "Closure request returned", "Command has reviewed the closure request.", case_uid, "closure")
     return await db.cases.find_one({"id": case_uid}, {"_id": 0})
 
 # ---------------------------------------------------------------------------
@@ -3967,8 +4042,117 @@ async def finalize_interview(case_uid: str, interview_id: str, body: InterviewFi
     await db.cases.update_one({"id": case_uid, "interviews.id": interview_id}, {"$set": {"interviews.$.status": "completed", "interviews.$.transcript": transcript, "interviews.$.assessment": assessment, "interviews.$.completed_at": now_iso(), "updated_at": now_iso()}, "$push": {"activity_log": _activity(user["username"], "INTERVIEW COMPLETED", interview_id)}})
     return assessment
 
+@api_router.post("/cases/{case_uid}/legislation/search")
+async def search_case_legislation(case_uid: str, body: LegislationSearchRequest, user: dict = Depends(get_current_user)):
+    doc = await _workspace_case(case_uid)
+    query = body.query.strip()
+    payload = {
+        "task": "Identify possible NSW legislation research topics for this fictional ER:LC case. Do not invent Act names, section numbers, offence elements, arrest powers, or legal conclusions. Return strict JSON with search_terms (array), possible_issues (array of objects with title, why, search_term), and notes.",
+        "query": query,
+        "verified_case_references": doc.get("legislation_references") or [],
+    }
+    if body.include_case_context:
+        payload["context"] = build_case_context(doc)
+    ai = await _call_scc_ai(
+        "You are SCC Legislation Research Assistant. You may identify legal research topics, but statutory citations must come only from verified_case_references supplied to you. Never fabricate legislation. Return strict JSON.",
+        payload,
+    )
+    if not isinstance(ai, dict):
+        terms = [query] if query else []
+        for interview in reversed(doc.get("interviews") or []):
+            assessment = interview.get("assessment") or {}
+            for issue in assessment.get("potential_legal_issues") or []:
+                if isinstance(issue, dict):
+                    candidate = str(issue.get("title") or issue.get("issue") or "").strip()
+                else:
+                    candidate = str(issue).strip()
+                if candidate and candidate not in terms:
+                    terms.append(candidate)
+        ai = {
+            "search_terms": terms[:8],
+            "possible_issues": [],
+            "notes": "Use the official NSW legislation search and save verified references back to the Case File before SCC relies on an Act or section.",
+        }
+    ai["official_search_url"] = _official_legislation_search_url()
+    ai["verified_references"] = doc.get("legislation_references") or []
+    return ai
+
+
+@api_router.post("/cases/{case_uid}/legislation/references", response_model=Case)
+async def save_legislation_reference(case_uid: str, body: LegislationReferenceCreate, user: dict = Depends(get_current_user)):
+    await _workspace_case(case_uid)
+    act = body.act.strip()
+    source_url = body.source_url.strip()
+    if not act or not source_url:
+        raise HTTPException(status_code=400, detail="Act and official source URL are required.")
+    if not source_url.lower().startswith("https://legislation.nsw.gov.au/"):
+        raise HTTPException(status_code=400, detail="Legislation references must use an official legislation.nsw.gov.au URL.")
+    item = {
+        "id": str(uuid.uuid4()), "act": act, "section": body.section.strip(), "title": body.title.strip(),
+        "source_url": source_url, "summary": body.summary.strip(), "verified_by": user["username"], "verified_at": now_iso(),
+    }
+    await db.cases.update_one(
+        {"id": case_uid},
+        {"$push": {"legislation_references": item, "activity_log": _activity(user["username"], "LEGISLATION REFERENCE SAVED", f"{act} {body.section.strip()}".strip())}, "$set": {"updated_at": now_iso()}},
+    )
+    return await db.cases.find_one({"id": case_uid}, {"_id": 0})
+
+
+@api_router.post("/cases/{case_uid}/interviews/{interview_id}/decision", response_model=Case)
+async def confirm_interview_outcome(case_uid: str, interview_id: str, body: InterviewOutcomeDecision, user: dict = Depends(get_current_user)):
+    outcome = body.outcome.strip()
+    if not outcome:
+        raise HTTPException(status_code=400, detail="A confirmed outcome is required.")
+    result = await db.cases.update_one(
+        {"id": case_uid, "interviews.id": interview_id},
+        {"$set": {"interviews.$.confirmed_outcome": outcome, "interviews.$.confirmed_outcome_notes": body.notes.strip(), "interviews.$.confirmed_by": user["username"], "interviews.$.confirmed_at": now_iso(), "updated_at": now_iso()},
+         "$push": {"activity_log": _activity(user["username"], "INTERVIEW OUTCOME CONFIRMED", f"{interview_id} · {outcome}")}},
+    )
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+    return await db.cases.find_one({"id": case_uid}, {"_id": 0})
+
+
+@api_router.post("/cases/{case_uid}/recommendations/adopt", response_model=Case)
+async def adopt_recommendation(case_uid: str, body: RecommendationAdoptRequest, user: dict = Depends(get_current_user)):
+    doc = await _workspace_case(case_uid)
+    action_type = body.action_type.strip().lower()
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Recommendation title is required.")
+    ts = now_iso()
+    activity = _activity(user["username"], "SCC RECOMMENDATION ADOPTED", f"{action_type or 'review'} · {title}")
+    update = {"$push": {"activity_log": activity}, "$set": {"updated_at": ts}}
+    if action_type == "gap":
+        item = {"id": _next_record_id(doc, "information_gaps", "GAP"), "question": title, "detail": body.detail.strip(), "priority": body.priority.strip().lower() or "medium", "status": "open", "created_by": user["username"], "created_at": ts, "resolution": ""}
+        update["$push"]["information_gaps"] = item
+    elif action_type == "lead":
+        item = {"id": _next_record_id(doc, "leads", "LEAD"), "title": title, "detail": body.detail.strip(), "linked_gap_id": body.linked_record.strip(), "priority": body.priority.strip().lower() or "medium", "status": "new", "created_by": user["username"], "created_at": ts}
+        update["$push"]["leads"] = item
+    else:
+        item = {"id": _next_record_id(doc, "tasks", "TASK"), "title": title, "detail": body.detail.strip(), "assigned_to": user["username"], "priority": body.priority.strip().lower() or "routine", "due_at": "", "linked_record": body.linked_record.strip(), "status": "open", "created_by": user["username"], "created_at": ts}
+        update["$push"]["tasks"] = item
+    await db.cases.update_one({"id": case_uid}, update)
+    return await db.cases.find_one({"id": case_uid}, {"_id": 0})
+
+
+@api_router.post("/cases/{case_uid}/operations/{operation_id}/quick-log", response_model=Case)
+async def operation_quick_log(case_uid: str, operation_id: str, body: OperationQuickLogRequest, user: dict = Depends(get_current_user)):
+    doc = await _workspace_case(case_uid)
+    operation = next((x for x in (doc.get("operations") or []) if x.get("id") == operation_id), None)
+    if not operation or operation.get("status") != "active":
+        raise HTTPException(status_code=400, detail="An active operation is required.")
+    action = body.action_taken.strip()
+    if not action:
+        raise HTTPException(status_code=400, detail="Quick Log action is required.")
+    ts = now_iso()
+    entry = {"id": str(uuid.uuid4()), "entry": ts, "date_time": ts, "officer": user["username"], "officer_id": user.get("officer_id", ""), "action_taken": action, "information_obtained": body.information_obtained.strip(), "outcome_further_action": body.outcome_further_action.strip(), "related_records": operation_id, "operation_id": operation_id}
+    await db.cases.update_one({"id": case_uid}, {"$push": {"investigation_log": entry, "activity_log": _activity(user["username"], "OPERATION QUICK LOG", f"{operation_id} · {action[:160]}")}, "$set": {"updated_at": ts}})
+    return await db.cases.find_one({"id": case_uid}, {"_id": 0})
+
+
 @api_router.post("/cases/{case_uid}/operations/plan")
-async def plan_operation(case_uid: str, body: OperationPlanRequest, user: dict = Depends(require_admin)):
+async def plan_operation(case_uid: str, body: OperationPlanRequest, user: dict = Depends(get_current_user)):
     doc = await _workspace_case(case_uid)
     ai = await _call_scc_ai("You are SCC Command Operations Planner. Return strict JSON with situation, operational_objective, known_information, unverified_information, information_gaps, key_evidence, tasking, operational_plan, success_criteria, considerations, post_operation_requirements. Use only supplied case information and Command instructions.", {"operation_type": body.operation_type, "command_instructions": body.command_instructions, "objective_override": body.objective_override, "context": build_case_context(doc)})
     if not isinstance(ai, dict): ai = {"situation": doc.get("request_basis") or doc.get("synopsis") or "Active SCC investigation.", "operational_objective": body.objective_override or doc.get("investigation_objective") or "Progress the authorised investigation objective.", "known_information": doc.get("known_information") or "", "unverified_information": [], "information_gaps": [x.get("question") for x in (doc.get("information_gaps") or []) if x.get("status") != "resolved"], "key_evidence": [x.get("evidence_id") for x in (doc.get("evidence") or []) if not x.get("removed")][:8], "tasking": [], "operational_plan": body.command_instructions or "Command instructions required before activation.", "success_criteria": [], "considerations": [], "post_operation_requirements": ["Complete an SCC operation debrief and return relevant outcomes to the Case File."]}
@@ -3979,6 +4163,9 @@ async def plan_operation(case_uid: str, body: OperationPlanRequest, user: dict =
 
 @api_router.post("/cases/{case_uid}/operations/{operation_id}/start", response_model=Case)
 async def start_operation(case_uid: str, operation_id: str, user: dict = Depends(require_admin)):
+    doc = await _workspace_case(case_uid)
+    if any(x.get("status") == "active" and x.get("id") != operation_id for x in (doc.get("operations") or [])):
+        raise HTTPException(status_code=409, detail="Another operation is already active for this Case File.")
     result = await db.cases.update_one({"id": case_uid, "operations.id": operation_id}, {"$set": {"operations.$.status": "active", "operations.$.started_by": user["username"], "operations.$.started_at": now_iso(), "updated_at": now_iso()}, "$push": {"activity_log": _activity(user["username"], "OPERATION STARTED", operation_id)}})
     if not result.matched_count: raise HTTPException(status_code=404, detail="Operation not found.")
     return await db.cases.find_one({"id": case_uid}, {"_id": 0})
@@ -3995,6 +4182,7 @@ async def debrief_operation(case_uid: str, operation_id: str, body: OperationDeb
 
 @api_router.get("/notifications")
 async def get_notifications(user: dict = Depends(get_current_user)):
+    await ensure_overdue_task_notifications(user["username"])
     return await db.notifications.find({"username": user["username"]}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
 
 @api_router.post("/notifications/read")
