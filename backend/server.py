@@ -30,7 +30,9 @@ from fastapi import (
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from starlette.responses import Response
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
+from bson import ObjectId
 from pydantic import BaseModel, Field
 
 
@@ -54,6 +56,7 @@ mongo_url = os.environ["MONGO_URL"]
 
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
+evidence_fs = AsyncIOMotorGridFSBucket(db, bucket_name="scc_evidence")
 
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
@@ -1472,7 +1475,7 @@ async def notify_discord(case: dict):
                 "inline": True,
             },
             {
-                "name": "PRIORITY",
+                "name": "REQUESTED PRIORITY",
                 "value": priority_label.upper(),
                 "inline": True,
             },
@@ -1488,12 +1491,22 @@ async def notify_discord(case: dict):
             },
             {
                 "name": "STATUS",
-                "value": str(case.get("status") or "pending").upper(),
+                "value": "PENDING COMMAND REVIEW",
                 "inline": True,
             },
             {
-                "name": "SYNOPSIS",
-                "value": synopsis[:1024],
+                "name": "BASIS FOR INVESTIGATION",
+                "value": (case.get("request_basis") or synopsis)[:1024],
+                "inline": False,
+            },
+            {
+                "name": "INVESTIGATION OBJECTIVE",
+                "value": (case.get("investigation_objective") or "Not specified.")[:1024],
+                "inline": False,
+            },
+            {
+                "name": "INITIAL SUPPORTING MATERIAL",
+                "value": f"{len(case.get('supporting_material') or [])} item(s) submitted",
                 "inline": False,
             },
         ],
@@ -1559,7 +1572,7 @@ async def notify_discord(case: dict):
     # If the attachment fetch failed, fall back to the remote URL rather
     # than sending a dead attachment:// reference.
     if not footer_attachments:
-        footer_embed["image"]["url"] = CASE_FOOTER_IMAGE_URL
+        case_alert_embed["image"]["url"] = CASE_FOOTER_IMAGE_URL
 
     data = await execute_discord_webhook(
         payload,
@@ -1898,6 +1911,44 @@ class TimelineNote(BaseModel):
     created_at: str
 
 
+class InvestigationLogCreate(BaseModel):
+    action_taken: str
+    information_obtained: str = ""
+    outcome_further_action: str = ""
+    related_records: str = ""
+
+
+class PersonnelRequest(BaseModel):
+    investigator: str
+
+
+class CommandRequestCreate(BaseModel):
+    request_type: str
+    details: str = ""
+    requested_value: str = ""
+
+
+class CommandRequestDecision(BaseModel):
+    decision: str
+    reason: str = ""
+
+
+class CommandFlagsUpdate(BaseModel):
+    flags: List[str] = Field(default_factory=list)
+
+
+class CommandNoteCreate(BaseModel):
+    note: str
+
+
+class ClosureRequestCreate(BaseModel):
+    outcome_summary: str
+
+
+class EvidenceRemoveRequest(BaseModel):
+    reason: str
+
+
 class Case(BaseModel):
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4())
@@ -1921,6 +1972,14 @@ class Case(BaseModel):
     request_original: Optional[dict] = None
     case_file: Optional[dict] = None
     workspace_unlocked: bool = False
+    investigation_log: List[dict] = Field(default_factory=list)
+    evidence: List[dict] = Field(default_factory=list)
+    assigned_investigators: List[str] = Field(default_factory=list)
+    activity_log: List[dict] = Field(default_factory=list)
+    command_requests: List[dict] = Field(default_factory=list)
+    command_flags: List[str] = Field(default_factory=list)
+    command_notes: List[dict] = Field(default_factory=list)
+    closure_request: Optional[dict] = None
     command_adjusted_by: Optional[str] = None
     command_adjusted_at: Optional[str] = None
 
@@ -2232,6 +2291,9 @@ async def list_cases(
         -1,
     ).to_list(1000)
 
+    if user.get("role") != "admin":
+        for doc in docs:
+            doc["command_notes"] = []
     return docs
 
 
@@ -2255,6 +2317,8 @@ async def get_case(
             detail="Case file not found.",
         )
 
+    if user.get("role") != "admin":
+        doc["command_notes"] = []
     return doc
 
 
@@ -3401,7 +3465,7 @@ async def add_note(
     return doc
 
 
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------\n# Investigation workspace / Command Centre\n# ---------------------------------------------------------------------------\n\ndef _activity(actor: str, action: str, detail: str = "") -> dict:\n    return {"id": str(uuid.uuid4()), "actor": actor, "action": action, "detail": detail, "created_at": now_iso()}\n\nasync def _workspace_case(case_uid: str) -> dict:\n    doc = await db.cases.find_one({"id": case_uid}, {"_id": 0})\n    if not doc:\n        raise HTTPException(status_code=404, detail="Case file not found.")\n    if doc.get("status") not in {"opened", "closed"} and not doc.get("workspace_unlocked"):\n        raise HTTPException(status_code=400, detail="Investigation workspace is not unlocked.")\n    return doc\n\n@api_router.post("/cases/{case_uid}/investigation-log", response_model=Case)\nasync def add_investigation_log(case_uid: str, body: InvestigationLogCreate, user: dict = Depends(get_current_user)):\n    await _workspace_case(case_uid)\n    if not body.action_taken.strip():\n        raise HTTPException(status_code=400, detail="Action taken is required.")\n    ts = now_iso()\n    entry = {"id": str(uuid.uuid4()), "entry": ts, "date_time": ts, "officer": user["username"], "officer_id": user.get("officer_id", ""), "action_taken": body.action_taken.strip(), "information_obtained": body.information_obtained.strip(), "outcome_further_action": body.outcome_further_action.strip(), "related_records": body.related_records.strip()}\n    await db.cases.update_one({"id": case_uid}, {"$push": {"investigation_log": entry, "activity_log": _activity(user["username"], "INVESTIGATION LOG ENTRY ADDED", body.action_taken.strip()[:180])}, "$set": {"updated_at": ts}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.post("/cases/{case_uid}/evidence", response_model=Case)\nasync def upload_evidence(case_uid: str, request: Request, user: dict = Depends(get_current_user)):\n    await _workspace_case(case_uid)\n    raw = await request.body()\n    if not raw:\n        raise HTTPException(status_code=400, detail="Evidence file is empty.")\n    if len(raw) > 50 * 1024 * 1024:\n        raise HTTPException(status_code=413, detail="Evidence files are limited to 50 MB.")\n    filename = request.headers.get("x-scc-filename", "evidence-file").strip()[:180]\n    evidence_type = request.headers.get("x-scc-evidence-type", "Other").strip()[:80]\n    description = request.headers.get("x-scc-description", "").strip()[:1500]\n    content_type = request.headers.get("content-type", "application/octet-stream").split(";")[0]\n    doc = await db.cases.find_one({"id": case_uid}, {"_id": 0, "case_id": 1, "evidence": 1})\n    existing = doc.get("evidence") or []\n    suffix = str(doc.get("case_id") or "SCC").split("-")[-1]\n    number = max([int(str(x.get("evidence_id", "0")).split("-")[-1]) for x in existing if str(x.get("evidence_id", "")).split("-")[-1].isdigit()] or [0]) + 1\n    evidence_id = f"EVD-{suffix}-{number:03d}"\n    file_id = await evidence_fs.upload_from_stream(filename, raw, metadata={"case_uid": case_uid, "evidence_id": evidence_id, "content_type": content_type})\n    ts = now_iso()\n    item = {"id": str(uuid.uuid4()), "evidence_id": evidence_id, "type": evidence_type, "description": description, "filename": filename, "content_type": content_type, "size": len(raw), "file_id": str(file_id), "uploaded_by": user["username"], "uploaded_at": ts, "removed": False}\n    await db.cases.update_one({"id": case_uid}, {"$push": {"evidence": item, "activity_log": _activity(user["username"], "EVIDENCE ADDED", f"{evidence_id} · {filename}")}, "$set": {"updated_at": ts}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.get("/cases/{case_uid}/evidence/{evidence_id}/file")\nasync def get_evidence_file(case_uid: str, evidence_id: str, user: dict = Depends(get_current_user)):\n    doc = await db.cases.find_one({"id": case_uid}, {"_id": 0, "evidence": 1})\n    if not doc:\n        raise HTTPException(status_code=404, detail="Case file not found.")\n    item = next((x for x in (doc.get("evidence") or []) if x.get("evidence_id") == evidence_id and not x.get("removed")), None)\n    if not item or not item.get("file_id"):\n        raise HTTPException(status_code=404, detail="Evidence file not found.")\n    import io\n    stream = io.BytesIO()\n    try:\n        await evidence_fs.download_to_stream(ObjectId(item["file_id"]), stream)\n    except Exception:\n        raise HTTPException(status_code=404, detail="Evidence file not found.")\n    headers = {"Content-Disposition": f'inline; filename="{item.get("filename", "evidence")}"', "Cache-Control": "private, no-store"}\n    return Response(stream.getvalue(), media_type=item.get("content_type") or "application/octet-stream", headers=headers)\n\n@api_router.post("/cases/{case_uid}/evidence/{evidence_id}/remove", response_model=Case)\nasync def remove_evidence(case_uid: str, evidence_id: str, body: EvidenceRemoveRequest, user: dict = Depends(require_admin)):\n    reason = body.reason.strip()\n    if not reason:\n        raise HTTPException(status_code=400, detail="A removal reason is required.")\n    ts = now_iso()\n    result = await db.cases.update_one({"id": case_uid, "evidence.evidence_id": evidence_id}, {"$set": {"evidence.$.removed": True, "evidence.$.removed_by": user["username"], "evidence.$.removed_at": ts, "evidence.$.removal_reason": reason, "updated_at": ts}, "$push": {"activity_log": _activity(user["username"], "EVIDENCE REMOVED", f"{evidence_id} · {reason}")}})\n    if not result.matched_count:\n        raise HTTPException(status_code=404, detail="Evidence item not found.")\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.post("/cases/{case_uid}/personnel", response_model=Case)\nasync def assign_personnel(case_uid: str, body: PersonnelRequest, user: dict = Depends(require_admin)):\n    investigator = body.investigator.strip()\n    if not investigator:\n        raise HTTPException(status_code=400, detail="Investigator is required.")\n    ts = now_iso()\n    await db.cases.update_one({"id": case_uid}, {"$addToSet": {"assigned_investigators": investigator}, "$push": {"activity_log": _activity(user["username"], "INVESTIGATOR ASSIGNED", investigator)}, "$set": {"updated_at": ts}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.delete("/cases/{case_uid}/personnel/{investigator}", response_model=Case)\nasync def unassign_personnel(case_uid: str, investigator: str, user: dict = Depends(require_admin)):\n    ts = now_iso()\n    await db.cases.update_one({"id": case_uid}, {"$pull": {"assigned_investigators": investigator}, "$push": {"activity_log": _activity(user["username"], "INVESTIGATOR UNASSIGNED", investigator)}, "$set": {"updated_at": ts}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.post("/cases/{case_uid}/command-requests", response_model=Case)\nasync def create_command_request(case_uid: str, body: CommandRequestCreate, user: dict = Depends(get_current_user)):\n    await _workspace_case(case_uid)\n    ts = now_iso()\n    req = {"id": str(uuid.uuid4()), "request_type": body.request_type.strip(), "details": body.details.strip(), "requested_value": body.requested_value.strip(), "status": "pending", "requested_by": user["username"], "requested_at": ts}\n    await db.cases.update_one({"id": case_uid}, {"$push": {"command_requests": req, "activity_log": _activity(user["username"], "COMMAND REQUEST SUBMITTED", req["request_type"])}, "$set": {"updated_at": ts}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.post("/cases/{case_uid}/command-requests/{request_id}/decision", response_model=Case)\nasync def decide_command_request(case_uid: str, request_id: str, body: CommandRequestDecision, user: dict = Depends(require_admin)):\n    decision = body.decision.strip().lower()\n    if decision not in {"approved", "denied", "returned"}:\n        raise HTTPException(status_code=400, detail="Invalid command decision.")\n    doc = await db.cases.find_one({"id": case_uid}, {"_id": 0})\n    req = next((x for x in (doc or {}).get("command_requests", []) if x.get("id") == request_id), None)\n    if not req:\n        raise HTTPException(status_code=404, detail="Command request not found.")\n    ts = now_iso()\n    await db.cases.update_one({"id": case_uid, "command_requests.id": request_id}, {"$set": {"command_requests.$.status": decision, "command_requests.$.decision_reason": body.reason.strip(), "command_requests.$.decided_by": user["username"], "command_requests.$.decided_at": ts, "updated_at": ts}, "$push": {"activity_log": _activity(user["username"], f"COMMAND REQUEST {decision.upper()}", req.get("request_type", ""))}})\n    # Apply approved priority requests automatically.\n    if decision == "approved" and req.get("request_type") == "priority_change" and req.get("requested_value") in PRIORITIES:\n        await db.cases.update_one({"id": case_uid}, {"$set": {"priority": req["requested_value"], "updated_at": ts}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.put("/cases/{case_uid}/command-flags", response_model=Case)\nasync def update_command_flags(case_uid: str, body: CommandFlagsUpdate, user: dict = Depends(require_admin)):\n    allowed = {"Command Attention", "Restricted", "Urgent Review"}\n    flags = [x for x in body.flags if x in allowed]\n    ts = now_iso()\n    await db.cases.update_one({"id": case_uid}, {"$set": {"command_flags": flags, "updated_at": ts}, "$push": {"activity_log": _activity(user["username"], "COMMAND FLAGS UPDATED", ", ".join(flags) or "Cleared")}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.post("/cases/{case_uid}/command-notes", response_model=Case)\nasync def add_command_note(case_uid: str, body: CommandNoteCreate, user: dict = Depends(require_admin)):\n    note = body.note.strip()\n    if not note:\n        raise HTTPException(status_code=400, detail="Command note cannot be empty.")\n    ts = now_iso()\n    item = {"id": str(uuid.uuid4()), "note": note, "author": user["username"], "created_at": ts}\n    await db.cases.update_one({"id": case_uid}, {"$push": {"command_notes": item, "activity_log": _activity(user["username"], "COMMAND NOTE ADDED")}, "$set": {"updated_at": ts}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.post("/cases/{case_uid}/closure-request", response_model=Case)\nasync def request_closure(case_uid: str, body: ClosureRequestCreate, user: dict = Depends(get_current_user)):\n    summary = body.outcome_summary.strip()\n    if not summary:\n        raise HTTPException(status_code=400, detail="Closure outcome summary is required.")\n    ts = now_iso()\n    item = {"status": "pending", "outcome_summary": summary, "requested_by": user["username"], "requested_at": ts}\n    await db.cases.update_one({"id": case_uid}, {"$set": {"closure_request": item, "updated_at": ts}, "$push": {"activity_log": _activity(user["username"], "CASE CLOSURE REQUESTED", summary[:180])}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n@api_router.post("/cases/{case_uid}/closure-request/{decision}", response_model=Case)\nasync def decide_closure(case_uid: str, decision: str, user: dict = Depends(require_admin)):\n    if decision not in {"approve", "return"}:\n        raise HTTPException(status_code=400, detail="Invalid closure decision.")\n    doc = await db.cases.find_one({"id": case_uid}, {"_id": 0})\n    if not doc or not doc.get("closure_request"):\n        raise HTTPException(status_code=404, detail="Closure request not found.")\n    ts = now_iso()\n    status = "closed" if decision == "approve" else doc.get("status", "opened")\n    closure = dict(doc["closure_request"]); closure.update({"status": "approved" if decision == "approve" else "returned", "decided_by": user["username"], "decided_at": ts})\n    await db.cases.update_one({"id": case_uid}, {"$set": {"closure_request": closure, "status": status, "updated_at": ts}, "$push": {"activity_log": _activity(user["username"], "CASE CLOSED" if decision == "approve" else "CLOSURE RETURNED TO INVESTIGATOR")}})\n    return await db.cases.find_one({"id": case_uid}, {"_id": 0})\n\n# ---------------------------------------------------------------------------
 # Approve case
 # ---------------------------------------------------------------------------
 
@@ -3536,6 +3600,13 @@ async def approve_case(
                 "updated_at": ts,
                 "workspace_unlocked": True,
                 "case_file": case_file,
+                "investigation_log": doc.get("investigation_log") or [],
+                "evidence": doc.get("evidence") or case_file["evidence"],
+                "assigned_investigators": doc.get("assigned_investigators") or [doc.get("lead_investigator")],
+                "activity_log": (doc.get("activity_log") or []) + [_activity(user["username"], "INVESTIGATION AUTHORISED", f"Priority: {doc.get('priority', 'routine')}")],
+                "command_requests": doc.get("command_requests") or [],
+                "command_flags": doc.get("command_flags") or [],
+                "command_notes": doc.get("command_notes") or [],
             },
             "$push": {
                 "notes": entry.model_dump()

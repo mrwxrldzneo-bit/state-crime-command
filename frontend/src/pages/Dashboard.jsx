@@ -853,6 +853,22 @@ export default function Dashboard() {
   const [caseNote, setCaseNote] = useState("");
   const [caseNoteError, setCaseNoteError] = useState("");
   const [isSavingCaseNote, setIsSavingCaseNote] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState("overview");
+  const [logAction, setLogAction] = useState("");
+  const [logInformation, setLogInformation] = useState("");
+  const [logOutcome, setLogOutcome] = useState("");
+  const [logRelated, setLogRelated] = useState("");
+  const [evidenceType, setEvidenceType] = useState("Screenshot / Image");
+  const [evidenceDescription, setEvidenceDescription] = useState("");
+  const [evidenceFile, setEvidenceFile] = useState(null);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [personnelName, setPersonnelName] = useState("");
+  const [commandRequestType, setCommandRequestType] = useState("priority_change");
+  const [commandRequestValue, setCommandRequestValue] = useState("");
+  const [commandRequestDetails, setCommandRequestDetails] = useState("");
+  const [commandNote, setCommandNote] = useState("");
+  const [closureSummary, setClosureSummary] = useState("");
 
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editCase, setEditCase] = useState(null);
@@ -943,7 +959,7 @@ export default function Dashboard() {
             known_information: localCase.known_information || "",
             investigation_objective: localCase.investigation_objective || "",
             supporting_material: Array.isArray(localCase.supporting_material)
-              ? localCase.supporting_material
+              ? localCase.supporting_material.map(({ file, ...item }) => item)
               : [],
           },
           45000
@@ -953,7 +969,25 @@ export default function Dashboard() {
           return;
         }
 
-        const remoteCase = response.data;
+        let remoteCase = response.data;
+
+        const pendingFiles = (localCase.supporting_material || []).filter((item) => item.file);
+        for (const item of pendingFiles) {
+          try {
+            const upload = await api.post(`/cases/${remoteCase.id}/evidence`, item.file, {
+              timeout: 60000,
+              headers: {
+                "Content-Type": item.file.type || "application/octet-stream",
+                "X-SCC-Filename": item.file.name || "evidence-file",
+                "X-SCC-Evidence-Type": item.type || "Other",
+                "X-SCC-Description": item.description || "",
+              },
+            });
+            if (upload?.data) remoteCase = upload.data;
+          } catch (error) {
+            console.error("Initial SCC evidence upload failed:", error);
+          }
+        }
 
         updateCases((currentCases) =>
           currentCases.map((item) => {
@@ -1208,9 +1242,10 @@ export default function Dashboard() {
           id: item.id || createInternalId(),
           type: item.type || "Other",
           description: String(item.description || "").trim(),
-          reference_url: String(item.reference_url || "").trim(),
+          reference_url: "",
+          file: item.file || null,
         }))
-        .filter((item) => item.description || item.reference_url),
+        .filter((item) => item.description || item.file),
       requested_priority: priority,
       request_original: {
         name: cleanName,
@@ -1254,6 +1289,7 @@ export default function Dashboard() {
         type: "Screenshot / Image",
         description: "",
         reference_url: "",
+        file: null,
       },
     ]);
   };
@@ -1270,6 +1306,104 @@ export default function Dashboard() {
     setSupportingMaterial((items) =>
       items.filter((item) => item.id !== id)
     );
+  };
+
+  const applyWorkspaceCase = (updated) => {
+    if (!updated) return;
+    setSelectedCase(updated);
+    updateCases((items) => items.map((item) =>
+      item.id === updated.id || item.case_id === updated.case_id ? { ...item, ...updated, backend_id: updated.id || item.backend_id } : item
+    ));
+  };
+
+  const workspacePost = async (path, data) => {
+    setWorkspaceBusy(true); setWorkspaceError("");
+    try {
+      const response = await sccRemoteRequest("POST", path, data, 60000);
+      applyWorkspaceCase(response?.data);
+      playSuccessSound();
+      return response?.data;
+    } catch (error) {
+      setWorkspaceError(error?.response?.data?.detail || "Unable to complete this case action.");
+      return null;
+    } finally { setWorkspaceBusy(false); }
+  };
+
+  const addInvestigationEntry = async () => {
+    if (!logAction.trim() || !selectedCase) return setWorkspaceError("Action taken is required.");
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/investigation-log`, { action_taken: logAction, information_obtained: logInformation, outcome_further_action: logOutcome, related_records: logRelated });
+    if (updated) { setLogAction(""); setLogInformation(""); setLogOutcome(""); setLogRelated(""); }
+  };
+
+  const uploadCaseEvidence = async () => {
+    if (!selectedCase) return;
+    if (evidenceType !== "Written Information" && !evidenceFile) return setWorkspaceError("Choose a file to upload.");
+    setWorkspaceBusy(true); setWorkspaceError("");
+    try {
+      let response;
+      if (evidenceType === "Written Information") {
+        const blob = new Blob([evidenceDescription || "Written information"], { type: "text/plain" });
+        response = await api.post(`/cases/${getCaseKey(selectedCase)}/evidence`, blob, { timeout: 60000, headers: { "Content-Type": "text/plain", "X-SCC-Filename": "written-information.txt", "X-SCC-Evidence-Type": evidenceType, "X-SCC-Description": evidenceDescription } });
+      } else {
+        response = await api.post(`/cases/${getCaseKey(selectedCase)}/evidence`, evidenceFile, { timeout: 60000, headers: { "Content-Type": evidenceFile.type || "application/octet-stream", "X-SCC-Filename": evidenceFile.name, "X-SCC-Evidence-Type": evidenceType, "X-SCC-Description": evidenceDescription } });
+      }
+      applyWorkspaceCase(response?.data); setEvidenceFile(null); setEvidenceDescription(""); playSuccessSound();
+    } catch (error) { setWorkspaceError(error?.response?.data?.detail || "Evidence upload failed."); } finally { setWorkspaceBusy(false); }
+  };
+
+  const openEvidenceFile = async (item) => {
+    try {
+      const response = await api.get(`/cases/${getCaseKey(selectedCase)}/evidence/${item.evidence_id}/file`, { responseType: "blob" });
+      const url = URL.createObjectURL(response.data);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch { setWorkspaceError("Unable to open this evidence file."); }
+  };
+
+  const removeEvidence = async (item) => {
+    const reason = window.prompt(`Reason for removing ${item.evidence_id}:`);
+    if (!reason?.trim()) return;
+    await workspacePost(`/cases/${getCaseKey(selectedCase)}/evidence/${item.evidence_id}/remove`, { reason });
+  };
+
+  const assignInvestigator = async () => {
+    if (!personnelName.trim()) return;
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/personnel`, { investigator: personnelName.trim() });
+    if (updated) setPersonnelName("");
+  };
+
+  const submitCommandRequest = async () => {
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/command-requests`, { request_type: commandRequestType, requested_value: commandRequestValue, details: commandRequestDetails });
+    if (updated) { setCommandRequestValue(""); setCommandRequestDetails(""); }
+  };
+
+  const decideCommandRequest = async (requestId, decision) => {
+    const reason = window.prompt(`Command decision reason (${decision}):`) || "";
+    await workspacePost(`/cases/${getCaseKey(selectedCase)}/command-requests/${requestId}/decision`, { decision, reason });
+  };
+
+  const toggleCommandFlag = async (flag) => {
+    const current = Array.isArray(selectedCase.command_flags) ? selectedCase.command_flags : [];
+    const flags = current.includes(flag) ? current.filter((x) => x !== flag) : [...current, flag];
+    setWorkspaceBusy(true);
+    try { const response = await sccRemoteRequest("PUT", `/cases/${getCaseKey(selectedCase)}/command-flags`, { flags }); applyWorkspaceCase(response?.data); }
+    catch (error) { setWorkspaceError(error?.response?.data?.detail || "Unable to update Command flags."); } finally { setWorkspaceBusy(false); }
+  };
+
+  const addCommandNote = async () => {
+    if (!commandNote.trim()) return;
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/command-notes`, { note: commandNote });
+    if (updated) setCommandNote("");
+  };
+
+  const requestCaseClosure = async () => {
+    if (!closureSummary.trim()) return setWorkspaceError("Closure outcome summary is required.");
+    const updated = await workspacePost(`/cases/${getCaseKey(selectedCase)}/closure-request`, { outcome_summary: closureSummary });
+    if (updated) setClosureSummary("");
+  };
+
+  const decideClosure = async (decision) => {
+    await workspacePost(`/cases/${getCaseKey(selectedCase)}/closure-request/${decision}`, {});
   };
 
   const handleFilterChange = (nextFilter) => {
@@ -2964,18 +3098,18 @@ export default function Dashboard() {
                               <option>Other</option>
                             </select>
 
-                            <input
-                              value={item.reference_url}
-                              onChange={(event) =>
-                                updateSupportingMaterial(
-                                  item.id,
-                                  "reference_url",
-                                  event.target.value
-                                )
-                              }
-                              className={INPUT_CLASS}
-                              placeholder="Reference link (optional)"
-                            />
+                            {item.type === "Written Information" ? (
+                              <div className="rounded-xl border border-[#1b324d]/80 bg-[#0b1828]/65 px-3 py-2 text-xs text-[#7186a0]">
+                                Written information does not require a file.
+                              </div>
+                            ) : (
+                              <input
+                                type="file"
+                                accept={item.type === "Screenshot / Image" ? "image/*" : item.type === "Video / Clip" ? "video/*" : item.type === "Document" ? ".pdf,.doc,.docx,.txt,.rtf" : undefined}
+                                onChange={(event) => updateSupportingMaterial(item.id, "file", event.target.files?.[0] || null)}
+                                className={`${INPUT_CLASS} file:mr-3 file:rounded-lg file:border-0 file:bg-[#d4b25a] file:px-3 file:py-1 file:text-[#07101b]`}
+                              />
+                            )}
                           </div>
 
                           <textarea
@@ -3430,6 +3564,54 @@ export default function Dashboard() {
                     </div>
                   </div>
                 )}
+
+              {(["opened", "closed"].includes(String(selectedCase.status || "").toLowerCase()) || selectedCase.workspace_unlocked) && (
+                <div className="mt-7 rounded-xl border border-[#1b324d]/80 bg-[#0b1828]/65 p-4">
+                  <div className="flex flex-wrap gap-2 border-b border-[#1b324d]/80 pb-3">
+                    {["overview","log","evidence","personnel","activity","requests", ...(isUserAdmin ? ["command"] : [])].map((tab) => (
+                      <button key={tab} type="button" onClick={() => { setWorkspaceTab(tab); setWorkspaceError(""); }} className={`px-3 py-2 rounded-lg text-[10px] font-mono uppercase tracking-wider border ${workspaceTab === tab ? "border-[#d4b25a]/70 bg-[#d4b25a] text-[#07101b]" : "border-[#2b4265] bg-[#10233a]/60 text-[#9aabc0]"}`}>{tab}</button>
+                    ))}
+                  </div>
+                  {workspaceError && <div className="mt-3 rounded-lg border border-[#6b2929] bg-[#2a1414]/60 p-3 text-xs text-[#f4a6a6]">{workspaceError}</div>}
+
+                  {workspaceTab === "overview" && <div className="mt-4 grid md:grid-cols-2 gap-3 text-sm text-[#cbd6e4]">
+                    <div className="rounded-xl border border-[#1b324d] p-3"><span className="text-[#7186a0]">Lead Investigator</span><p className="mt-1 text-white">{selectedCase.lead_investigator}</p></div>
+                    <div className="rounded-xl border border-[#1b324d] p-3"><span className="text-[#7186a0]">Authorised Priority</span><p className="mt-1 text-white uppercase">{selectedCase.priority}</p></div>
+                    <div className="md:col-span-2 rounded-xl border border-[#1b324d] p-3"><span className="text-[#7186a0]">Investigation Objective</span><p className="mt-1 whitespace-pre-wrap">{selectedCase.investigation_objective || "—"}</p></div>
+                  </div>}
+
+                  {workspaceTab === "log" && <div className="mt-4 space-y-4">
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <textarea value={logAction} onChange={(e)=>setLogAction(e.target.value)} className={`${INPUT_CLASS} min-h-[90px]`} placeholder="Action taken *" />
+                      <textarea value={logInformation} onChange={(e)=>setLogInformation(e.target.value)} className={`${INPUT_CLASS} min-h-[90px]`} placeholder="Information / evidence obtained" />
+                      <textarea value={logOutcome} onChange={(e)=>setLogOutcome(e.target.value)} className={`${INPUT_CLASS} min-h-[80px]`} placeholder="Outcome / further action" />
+                      <textarea value={logRelated} onChange={(e)=>setLogRelated(e.target.value)} className={`${INPUT_CLASS} min-h-[80px]`} placeholder="Related records" />
+                    </div>
+                    <button disabled={workspaceBusy} onClick={addInvestigationEntry} className="px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Log Investigation Entry</button>
+                    <div className="space-y-3">{(selectedCase.investigation_log || []).slice().reverse().map((entry,index)=><div key={entry.id || index} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-3"><p className="text-[10px] font-mono text-[#d4b25a]">ENTRY {String((selectedCase.investigation_log || []).length-index).padStart(3,"0")} · {formatDate(entry.date_time)} · {entry.officer}</p><p className="mt-2 text-sm text-white">{entry.action_taken}</p>{entry.information_obtained && <p className="mt-2 text-xs text-[#a9b8ca]">Information/Evidence: {entry.information_obtained}</p>}{entry.outcome_further_action && <p className="mt-1 text-xs text-[#a9b8ca]">Outcome/Further Action: {entry.outcome_further_action}</p>}{entry.related_records && <p className="mt-1 text-xs text-[#7186a0]">Related: {entry.related_records}</p>}</div>)}</div>
+                  </div>}
+
+                  {workspaceTab === "evidence" && <div className="mt-4 space-y-4">
+                    <div className="grid md:grid-cols-2 gap-3"><select value={evidenceType} onChange={(e)=>setEvidenceType(e.target.value)} className={INPUT_CLASS}><option>Screenshot / Image</option><option>Video / Clip</option><option>Document</option><option>Written Information</option><option>Other</option></select>{evidenceType !== "Written Information" && <input type="file" onChange={(e)=>setEvidenceFile(e.target.files?.[0] || null)} className={INPUT_CLASS} />}</div>
+                    <textarea value={evidenceDescription} onChange={(e)=>setEvidenceDescription(e.target.value)} className={`${INPUT_CLASS} min-h-[80px]`} placeholder="Evidence description" />
+                    <button disabled={workspaceBusy} onClick={uploadCaseEvidence} className="px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Save Evidence to Case</button>
+                    <div className="grid md:grid-cols-2 gap-3">{(selectedCase.evidence || []).filter((x)=>!x.removed).map((item)=><div key={item.evidence_id} className="rounded-xl border border-[#1b324d] bg-[#07111d]/70 p-3"><p className="text-[10px] font-mono text-[#d4b25a]">{item.evidence_id} · {item.type}</p><p className="mt-2 text-sm text-white">{item.description || item.filename || "Evidence item"}</p><p className="mt-1 text-[10px] text-[#7186a0]">{item.filename || "Written information"} · {item.uploaded_by || item.submitted_by || "Unknown"} · {formatDate(item.uploaded_at || item.submitted_at)}</p>{item.file_id && <button onClick={()=>openEvidenceFile(item)} className="mt-3 text-[10px] font-mono uppercase text-[#8ba0bd] hover:text-white">Open / Preview File</button>}{isUserAdmin && <button onClick={()=>removeEvidence(item)} className="mt-3 ml-4 text-[10px] font-mono uppercase text-[#f08080]">Remove with reason</button>}</div>)}</div>
+                  </div>}
+
+                  {workspaceTab === "personnel" && <div className="mt-4 space-y-3"><p className="text-xs text-[#7186a0]">Lead: <span className="text-white">{selectedCase.lead_investigator}</span></p>{(selectedCase.assigned_investigators || []).map((name)=><div key={name} className="rounded-lg border border-[#1b324d] px-3 py-2 text-sm text-[#d8e1ec]">{name}</div>)}{isUserAdmin && <div className="flex gap-2"><input value={personnelName} onChange={(e)=>setPersonnelName(e.target.value)} className={INPUT_CLASS} placeholder="Investigator / callsign"/><button onClick={assignInvestigator} className="px-4 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Assign</button></div>}</div>}
+
+                  {workspaceTab === "activity" && <div className="mt-4 space-y-2">{(selectedCase.activity_log || []).slice().reverse().map((item)=><div key={item.id} className="rounded-lg border border-[#1b324d] px-3 py-2"><p className="text-[10px] font-mono text-[#8ba0bd]">{formatDate(item.created_at)} · {item.actor}</p><p className="mt-1 text-xs text-white">{item.action}</p>{item.detail && <p className="text-xs text-[#7186a0]">{item.detail}</p>}</div>)}</div>}
+
+                  {workspaceTab === "requests" && <div className="mt-4 space-y-4">
+                    {!isUserAdmin && <div className="grid md:grid-cols-3 gap-2"><select value={commandRequestType} onChange={(e)=>setCommandRequestType(e.target.value)} className={INPUT_CLASS}><option value="priority_change">Priority Change</option><option value="additional_investigator">Additional Investigator</option><option value="general_command">Command Assistance</option></select><input value={commandRequestValue} onChange={(e)=>setCommandRequestValue(e.target.value)} className={INPUT_CLASS} placeholder="Requested value / investigator"/><input value={commandRequestDetails} onChange={(e)=>setCommandRequestDetails(e.target.value)} className={INPUT_CLASS} placeholder="Reason / details"/><button onClick={submitCommandRequest} className="px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Submit to Command</button></div>}
+                    {(selectedCase.command_requests || []).slice().reverse().map((req)=><div key={req.id} className="rounded-xl border border-[#1b324d] p-3"><p className="text-[10px] font-mono text-[#d4b25a]">{req.request_type?.replaceAll("_"," ")} · {req.status}</p><p className="mt-1 text-sm text-white">{req.requested_value || req.details || "Command request"}</p>{isUserAdmin && req.status === "pending" && <div className="mt-2 flex gap-2"><button onClick={()=>decideCommandRequest(req.id,"approved")} className="text-xs text-[#79e0a4]">Approve</button><button onClick={()=>decideCommandRequest(req.id,"returned")} className="text-xs text-[#d4b25a]">Return</button><button onClick={()=>decideCommandRequest(req.id,"denied")} className="text-xs text-[#f08080]">Deny</button></div>}</div>)}
+                    {String(selectedCase.status).toLowerCase() === "opened" && !isUserAdmin && <div className="border-t border-[#1b324d] pt-4"><textarea value={closureSummary} onChange={(e)=>setClosureSummary(e.target.value)} className={`${INPUT_CLASS} min-h-[80px]`} placeholder="Closure outcome summary"/><button onClick={requestCaseClosure} className="mt-2 px-4 py-2 rounded-xl border border-[#2b4265] text-xs font-bold uppercase text-white">Request Case Closure</button></div>}
+                    {selectedCase.closure_request && <div className="rounded-xl border border-[#665522] bg-[#2d2510]/30 p-3"><p className="text-[10px] font-mono text-[#d4b25a]">Closure Request · {selectedCase.closure_request.status}</p><p className="mt-2 text-sm text-white">{selectedCase.closure_request.outcome_summary}</p>{isUserAdmin && selectedCase.closure_request.status === "pending" && <div className="mt-2 flex gap-3"><button onClick={()=>decideClosure("approve")} className="text-xs text-[#79e0a4]">Approve Closure</button><button onClick={()=>decideClosure("return")} className="text-xs text-[#d4b25a]">Return to Investigator</button></div>}</div>}
+                  </div>}
+
+                  {workspaceTab === "command" && isUserAdmin && <div className="mt-4 space-y-4"><div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Command Flags</p><div className="mt-2 flex flex-wrap gap-2">{["Command Attention","Restricted","Urgent Review"].map((flag)=><button key={flag} onClick={()=>toggleCommandFlag(flag)} className={`px-3 py-2 rounded-lg border text-[10px] uppercase ${selectedCase.command_flags?.includes(flag) ? "border-[#d4b25a] text-[#d4b25a]" : "border-[#2b4265] text-[#8ba0bd]"}`}>{flag}</button>)}</div></div><div><p className="text-[10px] font-mono uppercase text-[#d4b25a]">Private Command Notes</p><textarea value={commandNote} onChange={(e)=>setCommandNote(e.target.value)} className={`${INPUT_CLASS} mt-2 min-h-[80px]`} placeholder="Visible to Command only"/><button onClick={addCommandNote} className="mt-2 px-4 py-2 rounded-xl bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase">Add Command Note</button><div className="mt-3 space-y-2">{(selectedCase.command_notes || []).slice().reverse().map((note)=><div key={note.id} className="rounded-lg border border-[#665522]/50 p-3"><p className="text-xs text-white">{note.note}</p><p className="mt-1 text-[10px] text-[#7186a0]">{note.author} · {formatDate(note.created_at)}</p></div>)}</div></div></div>}
+                </div>
+              )}
 
               <div className="mt-8 pt-7 border-t border-[#1b324d]/80">
                 <div className="flex items-center gap-3">
