@@ -18,7 +18,9 @@ import {
   Eye,
   Pencil,
   FilePlus2,
+  FileText,
   FolderOpen,
+  History,
   LogOut,
   MessageCircle,
   Radio,
@@ -739,6 +741,9 @@ export default function Dashboard() {
 
   const [selectedCase, setSelectedCase] = useState(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [caseNote, setCaseNote] = useState("");
+  const [caseNoteError, setCaseNoteError] = useState("");
+  const [isSavingCaseNote, setIsSavingCaseNote] = useState(false);
 
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editCase, setEditCase] = useState(null);
@@ -1439,14 +1444,150 @@ export default function Dashboard() {
     }
   };
 
-  const openCaseDetail = (caseData) => {
+  const openCaseDetail = async (caseData) => {
     setSelectedCase(caseData);
+    setCaseNote("");
+    setCaseNoteError("");
     setIsDetailOpen(true);
+
+    const backendKey = getCaseKey(caseData);
+
+    if (!caseData?.backend_id || !backendKey) {
+      return;
+    }
+
+    try {
+      const response = await sccRemoteRequest(
+        "GET",
+        `/cases/${backendKey}`,
+        undefined,
+        30000
+      );
+
+      if (response?.data) {
+        const refreshed = {
+          ...caseData,
+          ...response.data,
+          backend_id:
+            response.data?.id ||
+            caseData?.backend_id ||
+            caseData?.id,
+        };
+
+        setSelectedCase(refreshed);
+
+        updateCases((currentCases) =>
+          currentCases.map((item) =>
+            item.id === caseData.id ||
+            item.case_id === caseData.case_id
+              ? { ...item, ...refreshed }
+              : item
+          )
+        );
+      }
+    } catch {
+      // Keep the cached case visible if detail refresh is unavailable.
+    }
   };
 
   const closeCaseDetail = () => {
     setIsDetailOpen(false);
     setSelectedCase(null);
+    setCaseNote("");
+    setCaseNoteError("");
+    setIsSavingCaseNote(false);
+  };
+
+  const handleAddCaseNote = async (event) => {
+    event.preventDefault();
+
+    const note = caseNote.trim();
+
+    if (!selectedCase || !note || isSavingCaseNote) {
+      return;
+    }
+
+    const createdAt = new Date().toISOString();
+    const optimisticNote = {
+      id: createInternalId(),
+      note,
+      author: operatorName,
+      kind: "note",
+      created_at: createdAt,
+    };
+
+    setCaseNoteError("");
+    setIsSavingCaseNote(true);
+
+    const optimisticCase = {
+      ...selectedCase,
+      updated_at: createdAt,
+      notes: [
+        ...(Array.isArray(selectedCase?.notes)
+          ? selectedCase.notes
+          : []),
+        optimisticNote,
+      ],
+    };
+
+    setSelectedCase(optimisticCase);
+
+    updateCases((currentCases) =>
+      currentCases.map((item) =>
+        item.id === selectedCase.id ||
+        item.case_id === selectedCase.case_id
+          ? { ...item, ...optimisticCase }
+          : item
+      )
+    );
+
+    setCaseNote("");
+
+    const backendKey = getCaseKey(selectedCase);
+
+    if (!selectedCase?.backend_id || !backendKey) {
+      setIsSavingCaseNote(false);
+      return;
+    }
+
+    try {
+      const response = await sccRemoteRequest(
+        "POST",
+        `/cases/${backendKey}/notes`,
+        { note },
+        30000
+      );
+
+      if (response?.data) {
+        const refreshed = {
+          ...optimisticCase,
+          ...response.data,
+          backend_id:
+            response.data?.id ||
+            selectedCase?.backend_id,
+        };
+
+        setSelectedCase(refreshed);
+
+        updateCases((currentCases) =>
+          currentCases.map((item) =>
+            item.id === selectedCase.id ||
+            item.case_id === selectedCase.case_id
+              ? { ...item, ...refreshed }
+              : item
+          )
+        );
+      }
+
+      playSuccessSound();
+    } catch (error) {
+      setCaseNoteError(
+        error?.response?.data?.detail ||
+        "The note could not be synced."
+      );
+    } finally {
+      setIsSavingCaseNote(false);
+    }
   };
 
   const buildHelpDescription = () =>
@@ -2460,108 +2601,271 @@ export default function Dashboard() {
       )}
 
       {isDetailOpen && selectedCase && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <GlassPanel className="w-full max-w-3xl bg-[#081321]/94 overflow-hidden">
-            <div className="px-5 py-4 border-b border-[#1b324d]/80 flex items-center justify-between">
-              <div>
-                <p className="text-[9px] font-mono uppercase tracking-[0.24em] text-[#d4b25a]">
-                  {selectedCase.case_id}
-                </p>
-                <h2 className="text-xl font-bold mt-1">
-                  {selectedCase.name}
-                </h2>
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
+          <GlassPanel className="w-full max-w-5xl max-h-[94vh] overflow-y-auto bg-[#081321]/96 border-[#23405f]/90">
+            <div className="sticky top-0 z-20 px-6 md:px-8 py-5 bg-[#0a1c30]/95 backdrop-blur-xl border-b border-[#1b324d]/80">
+              <div className="flex items-start justify-between gap-5">
+                <div className="min-w-0">
+                  <p className="font-mono text-sm md:text-base tracking-[0.08em] text-[#d4b25a]">
+                    {selectedCase.case_id}
+                  </p>
+
+                  <h2 className="mt-2 text-2xl md:text-3xl font-bold uppercase tracking-wide text-[#f4d56a] break-words">
+                    {selectedCase.name}
+                  </h2>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="hidden sm:flex flex-col items-end gap-2">
+                    <StatusBadge status={selectedCase.status} />
+
+                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#2b4265] bg-[#172238]/85 text-[10px] font-mono font-bold uppercase tracking-[0.14em] text-[#a8b6c9]">
+                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                      {selectedCase.priority || "routine"}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={closeCaseDetail}
+                    className="p-2 rounded-xl text-[#8da0b8] hover:text-white hover:bg-[#142a42]/80"
+                    title="Close case file"
+                  >
+                    <X className="h-6 w-6" />
+                  </button>
+                </div>
               </div>
 
-              <button
-                type="button"
-                onClick={closeCaseDetail}
-                className="p-2 rounded-xl text-[#7186a0] hover:text-white hover:bg-[#142a42]/80"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div className="sm:hidden mt-4 flex flex-wrap gap-2">
+                <StatusBadge status={selectedCase.status} />
+                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#2b4265] bg-[#172238]/85 text-[10px] font-mono font-bold uppercase tracking-[0.14em] text-[#a8b6c9]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                  {selectedCase.priority || "routine"}
+                </span>
+              </div>
             </div>
 
-            <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <GlassPanel className="p-4">
-                <p className="text-[9px] font-mono uppercase tracking-widest text-[#7186a0]">
-                  Status
-                </p>
-                <div className="mt-2">
-                  <StatusBadge status={selectedCase.status} />
+            <div className="px-6 md:px-8 py-6">
+              <div className="divide-y divide-[#1b324d]/80">
+                <div className="grid grid-cols-[36px_1fr] gap-4 py-5 first:pt-0">
+                  <div className="text-[#d4b25a] pt-0.5">
+                    <Shield className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
+                      Division Involved
+                    </p>
+                    <p className="mt-2 text-lg text-[#e4ebf4]">
+                      {selectedCase.division || "—"}
+                    </p>
+                  </div>
                 </div>
-              </GlassPanel>
 
-              <GlassPanel className="p-4">
-                <p className="text-[9px] font-mono uppercase tracking-widest text-[#7186a0]">
-                  Priority
-                </p>
-                <p className="mt-2 text-sm font-semibold uppercase">
-                  {selectedCase.priority}
-                </p>
-              </GlassPanel>
+                <div className="grid grid-cols-[36px_1fr] gap-4 py-5">
+                  <div className="text-[#d4b25a] pt-0.5">
+                    <Radio className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
+                      Lead Investigator
+                    </p>
+                    <p className="mt-2 text-lg text-[#e4ebf4]">
+                      {selectedCase.lead_investigator || "—"}
+                    </p>
+                  </div>
+                </div>
 
-              <GlassPanel className="p-4">
-                <p className="text-[9px] font-mono uppercase tracking-widest text-[#7186a0]">
-                  Lead Investigator
-                </p>
-                <p className="mt-2 text-sm">
-                  {selectedCase.lead_investigator}
-                </p>
-              </GlassPanel>
+                <div className="grid grid-cols-[36px_1fr] gap-4 py-5">
+                  <div className="text-[#d4b25a] pt-0.5">
+                    <FolderOpen className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
+                      Logged By
+                    </p>
+                    <p className="mt-2 text-lg text-[#e4ebf4]">
+                      {selectedCase.created_by || "—"}
+                    </p>
+                    {selectedCase.officer_id && (
+                      <p className="mt-1 text-xs font-mono uppercase tracking-wider text-[#607793]">
+                        {selectedCase.officer_id}
+                      </p>
+                    )}
+                  </div>
+                </div>
 
-              <GlassPanel className="p-4">
-                <p className="text-[9px] font-mono uppercase tracking-widest text-[#7186a0]">
-                  Division
-                </p>
-                <p className="mt-2 text-sm">
-                  {selectedCase.division}
-                </p>
-              </GlassPanel>
+                <div className="grid grid-cols-[36px_1fr] gap-4 py-5">
+                  <div className="text-[#d4b25a] pt-0.5">
+                    <Clock3 className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
+                      Date Logged
+                    </p>
+                    <p className="mt-2 text-lg text-[#e4ebf4]">
+                      {formatDate(selectedCase.created_at)}
+                    </p>
+                  </div>
+                </div>
 
-              <GlassPanel className="p-4 md:col-span-2">
-                <p className="text-[9px] font-mono uppercase tracking-widest text-[#7186a0]">
-                  Synopsis
-                </p>
-                <p className="mt-2 text-sm leading-relaxed text-[#c8d4e2] whitespace-pre-wrap">
-                  {selectedCase.synopsis || "No synopsis supplied."}
-                </p>
-              </GlassPanel>
+                <div className="grid grid-cols-[36px_1fr] gap-4 py-5">
+                  <div className="text-[#d4b25a] pt-0.5">
+                    <History className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
+                      Last Updated
+                    </p>
+                    <p className="mt-2 text-lg text-[#e4ebf4]">
+                      {formatDate(
+                        selectedCase.updated_at ||
+                        selectedCase.created_at
+                      )}
+                    </p>
+                  </div>
+                </div>
 
-              <GlassPanel className="p-4">
-                <p className="text-[9px] font-mono uppercase tracking-widest text-[#7186a0]">
-                  Created By
-                </p>
-                <p className="mt-2 text-sm">
-                  {selectedCase.created_by || "—"}
-                </p>
-                <p className="mt-1 text-xs text-[#7186a0]">
-                  {selectedCase.officer_id || "No callsign recorded"}
-                </p>
-              </GlassPanel>
+                <div className="grid grid-cols-[36px_1fr] gap-4 py-5">
+                  <div className="text-[#d4b25a] pt-0.5">
+                    <FileText className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
+                      Synopsis
+                    </p>
+                    <p className="mt-2 text-base leading-relaxed text-[#d8e1ec] whitespace-pre-wrap">
+                      {selectedCase.synopsis || "No synopsis supplied."}
+                    </p>
+                  </div>
+                </div>
+              </div>
 
-              <GlassPanel className="p-4">
-                <p className="text-[9px] font-mono uppercase tracking-widest text-[#7186a0]">
-                  Created
-                </p>
-                <p className="mt-2 text-sm">
-                  {formatDate(selectedCase.created_at)}
-                </p>
-                <p className="mt-1 text-xs text-[#7186a0]">
-                  Sync: {selectedCase.sync_status || "local"}
-                </p>
-              </GlassPanel>
+              {String(selectedCase.status || "").toLowerCase() === "pending" && (
+                <div className="mt-6 rounded-xl border border-[#665522] bg-[#2d2510]/65 px-5 py-4 flex items-center gap-3">
+                  <Shield className="h-5 w-5 shrink-0 text-[#d4b25a]" />
+                  <p className="text-sm text-[#ead58a]">
+                    Awaiting administrator approval.
+                  </p>
+                </div>
+              )}
+
+              {String(selectedCase.status || "").toLowerCase() === "denied" && (
+                <div className="mt-6 rounded-xl border border-[#6b2929] bg-[#2a1414]/70 px-5 py-4">
+                  <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#f08080]">
+                    Case Denied
+                  </p>
+                  <p className="mt-2 text-sm text-[#e9b0b0]">
+                    {selectedCase.denial_reason || "No denial reason recorded."}
+                  </p>
+                </div>
+              )}
 
               {selectedCase.discord_url && (
                 <a
                   href={selectedCase.discord_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="md:col-span-2 inline-flex items-center justify-center gap-2 rounded-xl border border-[#665522] bg-[#2d2510]/55 px-4 py-3 text-xs font-bold uppercase tracking-wider text-[#d4b25a] hover:bg-[#2d2510]/80"
+                  className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#665522] bg-[#2d2510]/55 px-4 py-3.5 text-sm font-semibold text-[#e2c46c] hover:bg-[#2d2510]/80 transition"
                 >
                   <ExternalLink className="h-4 w-4" />
-                  Open Discord Case File
+                  View Case File Here
                 </a>
               )}
+
+              <div className="mt-8 pt-7 border-t border-[#1b324d]/80">
+                <div className="flex items-center gap-3">
+                  <History className="h-5 w-5 text-[#d4b25a]" />
+                  <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-[#e7edf6]">
+                    Case Timeline
+                  </h3>
+                </div>
+
+                <form
+                  onSubmit={handleAddCaseNote}
+                  className="mt-5 flex flex-col sm:flex-row gap-3"
+                >
+                  <input
+                    type="text"
+                    value={caseNote}
+                    onChange={(event) => {
+                      setCaseNote(event.target.value);
+                      if (caseNoteError) {
+                        setCaseNoteError("");
+                      }
+                    }}
+                    placeholder="Add a dated update note..."
+                    className={`${INPUT_CLASS} flex-1`}
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={!caseNote.trim() || isSavingCaseNote}
+                    className="sm:w-auto px-5 py-3 rounded-xl border border-[#8a7638] bg-[#81734d] text-[#06101a] font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#9b895a] transition inline-flex items-center justify-center gap-2"
+                  >
+                    <Send className="h-4 w-4" />
+                    {isSavingCaseNote ? "Saving" : "Log"}
+                  </button>
+                </form>
+
+                {caseNoteError && (
+                  <p className="mt-2 text-xs text-[#f08080]">
+                    {caseNoteError}
+                  </p>
+                )}
+
+                <div className="mt-6 space-y-0">
+                  {Array.isArray(selectedCase.notes) &&
+                  selectedCase.notes.length > 0 ? (
+                    [...selectedCase.notes]
+                      .sort(
+                        (a, b) =>
+                          new Date(b?.created_at || 0).getTime() -
+                          new Date(a?.created_at || 0).getTime()
+                      )
+                      .map((note, index) => (
+                        <div
+                          key={
+                            note?.id ||
+                            `${note?.created_at || "note"}-${index}`
+                          }
+                          className="relative pl-9 pb-6 last:pb-0"
+                        >
+                          {index < selectedCase.notes.length - 1 && (
+                            <div className="absolute left-[7px] top-4 bottom-0 w-px bg-[#244766]" />
+                          )}
+
+                          <div className="absolute left-0 top-1 h-3.5 w-3.5 rounded-full border border-[#e2c46c]/40 bg-[#d4b25a]" />
+
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] uppercase tracking-[0.14em] text-[#7186a0]">
+                            <span>
+                              {formatDate(note?.created_at)}
+                            </span>
+                            <span>·</span>
+                            <span>
+                              {String(note?.author || "System").toUpperCase()}
+                            </span>
+                            {note?.kind && (
+                              <>
+                                <span>·</span>
+                                <span className="text-[#d4b25a]">
+                                  {String(note.kind).toUpperCase()}
+                                </span>
+                              </>
+                            )}
+                          </div>
+
+                          <p className="mt-2 text-sm leading-relaxed text-[#d8e1ec] whitespace-pre-wrap">
+                            {note?.note || ""}
+                          </p>
+                        </div>
+                      ))
+                  ) : (
+                    <div className="rounded-xl border border-[#1b324d]/80 bg-[#0b1828]/65 px-4 py-5 text-sm text-[#7186a0]">
+                      No timeline notes have been logged yet.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </GlassPanel>
         </div>
