@@ -16,6 +16,8 @@ from typing import List, Optional
 
 import jwt
 import httpx
+import discord
+from discord import app_commands
 from fastapi import (
     FastAPI,
     APIRouter,
@@ -2816,6 +2818,11 @@ async def discord_interactions_status():
         "endpoint": "/api/discord/interactions",
         "root_alias": "/discord/interactions",
         "commands": ["/reply", "/end"],
+        "gateway_connected": (
+            discord_gateway_client.is_ready()
+            if "discord_gateway_client" in globals()
+            else False
+        ),
     }
 
 
@@ -3689,10 +3696,308 @@ async def get_active_support_case_by_discord_channel(
     )
 
 
+
+# ---------------------------------------------------------------------------
+# Discord Gateway bot
+# ---------------------------------------------------------------------------
+
+discord_intents = discord.Intents.none()
+discord_gateway_client = discord.Client(
+    intents=discord_intents,
+)
+discord_gateway_tree = app_commands.CommandTree(
+    discord_gateway_client
+)
+
+discord_gateway_task = None
+discord_gateway_synced = False
+
+SCC_DISCORD_GUILD = (
+    discord.Object(id=int(DISCORD_GUILD_ID))
+    if str(DISCORD_GUILD_ID or "").isdigit()
+    else None
+)
+
+
+class SCCGatewayReplyModal(
+    discord.ui.Modal,
+    title="SCC Live Support Reply",
+):
+    reply_text = discord.ui.TextInput(
+        label="Reply",
+        placeholder="Type your reply...",
+        style=discord.TextStyle.paragraph,
+        min_length=1,
+        max_length=1800,
+        required=True,
+    )
+
+    def __init__(self, *, channel_id: str = "", session_id: str = ""):
+        super().__init__(timeout=300)
+        self.channel_id = str(channel_id or "").strip()
+        self.session_id = str(session_id or "").strip()
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(
+            ephemeral=True,
+            thinking=True,
+        )
+
+        author_name = (
+            getattr(interaction.user, "display_name", None)
+            or getattr(interaction.user, "name", None)
+            or "Support Agent"
+        )
+        author_id = str(
+            getattr(interaction.user, "id", "")
+        )
+        reply_value = str(
+            self.reply_text.value or ""
+        ).strip()
+
+        if self.session_id:
+            await reply_from_discord_interaction(
+                self.session_id,
+                author_name,
+                author_id,
+                reply_value,
+            )
+        else:
+            await reply_from_discord_channel(
+                self.channel_id,
+                author_name,
+                author_id,
+                reply_value,
+            )
+
+        await interaction.followup.send(
+            "Reply sent.",
+            ephemeral=True,
+        )
+
+
+async def gateway_reply_command(
+    interaction: discord.Interaction,
+):
+    await interaction.response.send_modal(
+        SCCGatewayReplyModal(
+            channel_id=str(
+                interaction.channel_id or ""
+            )
+        )
+    )
+
+
+async def gateway_end_command(
+    interaction: discord.Interaction,
+):
+    await interaction.response.defer(
+        ephemeral=True,
+        thinking=True,
+    )
+
+    channel_id = str(
+        interaction.channel_id or ""
+    ).strip()
+
+    case = await get_active_support_case_by_discord_channel(
+        channel_id
+    )
+
+    if not case:
+        await interaction.followup.send(
+            "This command only works inside an active SCC support thread.",
+            ephemeral=True,
+        )
+        return
+
+    author_name = (
+        getattr(interaction.user, "display_name", None)
+        or getattr(interaction.user, "name", None)
+        or "Support Agent"
+    )
+
+    await end_support_from_discord_interaction(
+        str(case.get("help_session_id") or ""),
+        author_name,
+    )
+
+    await interaction.followup.send(
+        "Live Support is ending.",
+        ephemeral=True,
+    )
+
+
+if SCC_DISCORD_GUILD is not None:
+    discord_gateway_tree.add_command(
+        app_commands.Command(
+            name="reply",
+            description="Reply to this SCC support chat",
+            callback=gateway_reply_command,
+        ),
+        guild=SCC_DISCORD_GUILD,
+        override=True,
+    )
+
+    discord_gateway_tree.add_command(
+        app_commands.Command(
+            name="end",
+            description="End this SCC support chat",
+            callback=gateway_end_command,
+        ),
+        guild=SCC_DISCORD_GUILD,
+        override=True,
+    )
+
+
+async def gateway_component_interaction(
+    interaction: discord.Interaction,
+):
+    if interaction.type != discord.InteractionType.component:
+        return
+
+    custom_id = str(
+        (interaction.data or {}).get("custom_id") or ""
+    )
+
+    if custom_id.startswith("scc_support_reply:"):
+        session_id = custom_id.split(":", 1)[1].strip()
+
+        await interaction.response.send_modal(
+            SCCGatewayReplyModal(
+                session_id=session_id,
+            )
+        )
+        return
+
+    if custom_id.startswith("scc_support_end:"):
+        session_id = custom_id.split(":", 1)[1].strip()
+
+        await interaction.response.defer(
+            ephemeral=True,
+            thinking=True,
+        )
+
+        author_name = (
+            getattr(interaction.user, "display_name", None)
+            or getattr(interaction.user, "name", None)
+            or "Support Agent"
+        )
+
+        await end_support_from_discord_interaction(
+            session_id,
+            author_name,
+        )
+
+        await interaction.followup.send(
+            "Live Support is ending.",
+            ephemeral=True,
+        )
+
+
+discord_gateway_client.add_listener(
+    gateway_component_interaction,
+    "on_interaction",
+)
+
+
+@discord_gateway_client.event
+async def on_ready():
+    global discord_gateway_synced
+
+    logger.info(
+        "Discord Gateway connected as %s (%s).",
+        discord_gateway_client.user,
+        getattr(discord_gateway_client.user, "id", "unknown"),
+    )
+
+    if (
+        not discord_gateway_synced
+        and SCC_DISCORD_GUILD is not None
+    ):
+        try:
+            synced = await discord_gateway_tree.sync(
+                guild=SCC_DISCORD_GUILD
+            )
+            discord_gateway_synced = True
+
+            logger.info(
+                "Discord Gateway slash commands synced: %s",
+                ", ".join(
+                    f"/{command.name}"
+                    for command in synced
+                ) or "none",
+            )
+        except Exception as exc:
+            logger.exception(
+                "Discord Gateway slash-command sync failed: %s",
+                exc,
+            )
+
+
+def _discord_gateway_task_done(task: asyncio.Task):
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        return
+
+    if error:
+        logger.error(
+            "Discord Gateway task stopped unexpectedly: %s",
+            error,
+        )
+
+
+async def start_discord_gateway():
+    global discord_gateway_task
+
+    if not DISCORD_BOT_TOKEN:
+        logger.warning(
+            "Discord Gateway not started: DISCORD_BOT_TOKEN is missing."
+        )
+        return
+
+    if (
+        discord_gateway_task
+        and not discord_gateway_task.done()
+    ):
+        return
+
+    discord_gateway_task = asyncio.create_task(
+        discord_gateway_client.start(
+            DISCORD_BOT_TOKEN
+        ),
+        name="scc-discord-gateway",
+    )
+    discord_gateway_task.add_done_callback(
+        _discord_gateway_task_done
+    )
+
+
+async def stop_discord_gateway():
+    global discord_gateway_task
+
+    if not discord_gateway_client.is_closed():
+        await discord_gateway_client.close()
+
+    if discord_gateway_task:
+        try:
+            await asyncio.wait_for(
+                discord_gateway_task,
+                timeout=5,
+            )
+        except (
+            asyncio.TimeoutError,
+            asyncio.CancelledError,
+        ):
+            discord_gateway_task.cancel()
+
+        discord_gateway_task = None
+
+
 @app.on_event("startup")
 async def startup():
-    await ensure_discord_public_key()
-    await register_discord_slash_commands()
+    await start_discord_gateway()
 
 
 app.include_router(
@@ -3731,5 +4036,6 @@ app.add_middleware(
 
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown_services():
+    await stop_discord_gateway()
     client.close()
