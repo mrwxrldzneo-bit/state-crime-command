@@ -585,22 +585,55 @@ function HeaderClock() {
 }
 
 
-function WaitingForSupport() {
-  return (
-    <div className="mt-3 flex items-center gap-2">
-      <span className="relative flex h-2.5 w-2.5">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#d4b25a] opacity-50" />
-        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#d4b25a]" />
-      </span>
 
-      <span className="relative overflow-hidden text-[10px] font-mono uppercase tracking-[0.18em] text-[#9aabc0]">
-        <span className="animate-pulse">
-          Waiting for support
-        </span>
-        <span className="ml-0.5 inline-flex w-5">
-          <span className="animate-pulse">...</span>
-        </span>
-      </span>
+function FullSupportWaiting({ caseId, onClose }) {
+  return (
+    <div className="h-full min-h-0 flex flex-col bg-[#081321]/96">
+      <div className="flex items-center justify-between px-5 py-4">
+        <div>
+          <p className="text-[9px] font-mono uppercase tracking-[0.26em] text-[#d4b25a]">
+            Live Support
+          </p>
+          <p className="mt-1 text-sm font-bold tracking-[0.08em] text-[#e7edf6]">
+            {caseId}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-2 rounded-xl text-[#7186a0] hover:text-white hover:bg-[#142a42]/80"
+          title="Hide Live Support"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center px-8">
+        <div className="text-center">
+          <div className="relative mx-auto h-16 w-16">
+            <div className="absolute inset-0 rounded-full border border-[#d4b25a]/20 animate-ping" />
+            <div className="absolute inset-2 rounded-full border border-[#d4b25a]/35 animate-pulse" />
+            <div className="absolute inset-[22px] rounded-full bg-[#d4b25a]/90 shadow-[0_0_28px_rgba(212,178,90,0.22)]" />
+          </div>
+
+          <p className="mt-7 text-[11px] font-mono uppercase tracking-[0.32em] text-[#d4b25a] animate-pulse">
+            Waiting for support
+          </p>
+
+          <p className="mt-3 text-[11px] leading-relaxed text-[#7186a0]">
+            Your request has been sent to command.
+            <br />
+            This chat will open when a Support Agent replies.
+          </p>
+
+          <div className="mt-5 flex items-center justify-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#607793] animate-pulse" />
+            <span className="h-1.5 w-1.5 rounded-full bg-[#607793] animate-pulse [animation-delay:180ms]" />
+            <span className="h-1.5 w-1.5 rounded-full bg-[#607793] animate-pulse [animation-delay:360ms]" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1411,9 +1444,11 @@ export default function Dashboard() {
       incoming.map((message) => ({
         id: message?.id || createInternalId(),
         author:
-          message?.author ||
-          message?.username ||
-          "SUPPORT",
+          message?.source === "discord"
+            ? "Support Agent"
+            : message?.author ||
+              message?.username ||
+              "SUPPORT",
         content:
           message?.content ||
           message?.message ||
@@ -1695,7 +1730,9 @@ export default function Dashboard() {
         }
 
         const incoming = Array.isArray(payload?.messages)
-          ? payload.messages
+          ? payload.messages.filter(
+              (message) => message?.source === "discord"
+            )
           : [];
 
         if (disposed || !incoming.length) {
@@ -1735,10 +1772,7 @@ export default function Dashboard() {
               id:
                 message?.id ||
                 createInternalId(),
-              author:
-                message?.author ||
-                message?.username ||
-                "SUPPORT",
+              author: "Support Agent",
               content:
                 message?.content ||
                 message?.message ||
@@ -1855,6 +1889,10 @@ export default function Dashboard() {
       window.location.href = "/login";
     }
   };
+
+  const hasSupportAgentReply = chatMessages.some(
+    (message) => message?.source === "discord"
+  );
 
   if (!hasCaseAccess && user) {
     return (
@@ -2679,6 +2717,13 @@ export default function Dashboard() {
       {isChatOpen && chatCase && (
         <div className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-[2px] pointer-events-none">
           <GlassPanel className="pointer-events-auto absolute right-3 top-3 bottom-3 w-[min(460px,calc(100vw-1.5rem))] bg-[#081321]/94 overflow-hidden flex flex-col">
+            {!hasSupportAgentReply && chatSessionActive ? (
+              <FullSupportWaiting
+                caseId={chatCase.case_id}
+                onClose={closeHelpChat}
+              />
+            ) : (
+              <>
             <div className="px-4 py-4 border-b border-[#1b324d]/80 bg-[#0c1b2c]/92 flex items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
@@ -2733,11 +2778,6 @@ export default function Dashboard() {
                 .
               </p>
 
-              {chatSessionActive && !chatMessages.some(
-                (message) => message?.source === "discord"
-              ) && (
-                <WaitingForSupport />
-              )}
             </div>
 
             {supportEndCountdown !== null && (
@@ -2837,6 +2877,8 @@ export default function Dashboard() {
                 </button>
               </div>
             </form>
+              </>
+            )}
           </GlassPanel>
         </div>
       )}

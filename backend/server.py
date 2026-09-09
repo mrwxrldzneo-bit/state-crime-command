@@ -842,13 +842,13 @@ async def deliver_discord_modal_reply(
 
     sent = await post_discord_thread_message(
         thread_id,
-        f"**{author_name} [COMMAND]**\n{reply_text[:1800]}",
+        f"**Support Agent**\n{reply_text[:1800]}",
     )
     discord_message_id = str((sent or {}).get("id") or "").strip()
 
     incoming = {
         "id": str(uuid.uuid4()),
-        "username": f"{author_name} [DISCORD]",
+        "username": "Support Agent",
         "officer_id": author_id,
         "message": reply_text[:2000],
         "created_at": now_iso(),
@@ -1312,11 +1312,7 @@ async def sync_discord_thread_replies(
         if not content:
             continue
 
-        display_name = (
-            author.get("global_name")
-            or author.get("username")
-            or "COMMAND STAFF"
-        )
+        display_name = "Support Agent"
 
         additions.append({
             "id": str(uuid.uuid4()),
@@ -3325,6 +3321,24 @@ async def startup():
 app.include_router(
     api_router
 )
+
+
+@app.post("/discord/interactions")
+async def discord_interactions_root_alias(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    return await discord_interactions(
+        request,
+        background_tasks,
+    )
+
+
+@app.get("/discord/interactions/status")
+async def discord_interactions_status_root_alias():
+    return await discord_interactions_status()
+
+
 
 
 app.add_middleware(
