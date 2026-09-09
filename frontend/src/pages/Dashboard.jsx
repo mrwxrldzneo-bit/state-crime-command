@@ -58,6 +58,58 @@ const PRIORITIES = [
   "high-risk",
 ];
 
+function buildLocalProfessionalSummary(caseData) {
+  const clean = (value) => {
+    const text = String(value || "").trim().replace(/\s+/g, " ");
+    if (!text) return "";
+    const sentence = text.charAt(0).toUpperCase() + text.slice(1);
+    return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+  };
+
+  const basis = clean(caseData?.request_basis || caseData?.synopsis);
+  const known = clean(caseData?.known_information);
+  const objective = clean(caseData?.investigation_objective);
+  const parts = [];
+
+  if (basis) {
+    parts.push(
+      `This investigation was authorised following command review of the submitted grounds. ${basis}`
+    );
+  }
+  if (known) {
+    parts.push(
+      `At the time of authorisation, the recorded known information was as follows: ${known}`
+    );
+  }
+  if (objective) {
+    parts.push(
+      `The stated investigative objective is recorded as follows: ${objective}`
+    );
+  }
+
+  return parts.join("\n\n") || "Investigation authorised following command review.";
+}
+
+function buildLocalEvidenceRegister(caseData, approvedBy, approvedAt) {
+  const suffix = String(caseData?.case_id || "SCC").split("-").pop();
+  return (Array.isArray(caseData?.supporting_material)
+    ? caseData.supporting_material
+    : []
+  )
+    .filter((item) => item?.description || item?.reference_url)
+    .map((item, index) => ({
+      evidence_id: `EVD-${suffix}-${String(index + 1).padStart(3, "0")}`,
+      type: item?.type || "Other",
+      description: item?.description || "",
+      reference_url: item?.reference_url || "",
+      submitted_by: caseData?.created_by || "Unknown",
+      submitted_at: caseData?.created_at || approvedAt,
+      registered_at: approvedAt,
+      registered_by: approvedBy,
+      source: "initial_submission",
+    }));
+}
+
 const MATRIX_CHARS =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#@$%&*+=?/<>";
 
@@ -781,8 +833,22 @@ export default function Dashboard() {
   const [priority, setPriority] = useState(PRIORITIES[0]);
   const [discordLink, setDiscordLink] = useState("");
   const [synopsis, setSynopsis] = useState("");
+  const [requestBasis, setRequestBasis] = useState("");
+  const [knownInformation, setKnownInformation] = useState("");
+  const [investigationObjective, setInvestigationObjective] = useState("");
+  const [supportingMaterial, setSupportingMaterial] = useState([]);
 
   const [selectedCase, setSelectedCase] = useState(null);
+  const [commandChangeMode, setCommandChangeMode] = useState("no");
+  const [reviewName, setReviewName] = useState("");
+  const [reviewLead, setReviewLead] = useState("");
+  const [reviewDivision, setReviewDivision] = useState(DIVISIONS[0]);
+  const [reviewPriority, setReviewPriority] = useState(PRIORITIES[0]);
+  const [reviewBasis, setReviewBasis] = useState("");
+  const [reviewKnownInformation, setReviewKnownInformation] = useState("");
+  const [reviewObjective, setReviewObjective] = useState("");
+  const [reviewActionError, setReviewActionError] = useState("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [caseNote, setCaseNote] = useState("");
   const [caseNoteError, setCaseNoteError] = useState("");
@@ -873,6 +939,12 @@ export default function Dashboard() {
             priority: localCase.priority,
             discord_url: localCase.discord_url,
             synopsis: localCase.synopsis,
+            request_basis: localCase.request_basis || localCase.synopsis,
+            known_information: localCase.known_information || "",
+            investigation_objective: localCase.investigation_objective || "",
+            supporting_material: Array.isArray(localCase.supporting_material)
+              ? localCase.supporting_material
+              : [],
           },
           45000
         );
@@ -941,6 +1013,12 @@ export default function Dashboard() {
           priority: caseData.priority,
           discord_url: caseData.discord_url || "",
           synopsis: caseData.synopsis || "",
+          request_basis: caseData.request_basis || caseData.synopsis || "",
+          known_information: caseData.known_information || "",
+          investigation_objective: caseData.investigation_objective || "",
+          supporting_material: Array.isArray(caseData.supporting_material)
+            ? caseData.supporting_material
+            : [],
         },
         45000
       );
@@ -1073,6 +1151,10 @@ export default function Dashboard() {
     setPriority(PRIORITIES[0]);
     setDiscordLink("");
     setSynopsis("");
+    setRequestBasis("");
+    setKnownInformation("");
+    setInvestigationObjective("");
+    setSupportingMaterial([]);
     setFormError("");
   };
 
@@ -1086,6 +1168,7 @@ export default function Dashboard() {
 
     const cleanName = caseName.trim();
     const cleanLead = leadInvestigator.trim();
+    const cleanBasis = requestBasis.trim() || synopsis.trim();
 
     if (!cleanName) {
       setFormError("Case name is required.");
@@ -1094,6 +1177,11 @@ export default function Dashboard() {
 
     if (!cleanLead) {
       setFormError("Lead investigator is required.");
+      return;
+    }
+
+    if (!cleanBasis) {
+      setFormError("Basis for investigation is required.");
       return;
     }
 
@@ -1111,7 +1199,29 @@ export default function Dashboard() {
       division,
       priority,
       discord_url: discordLink.trim(),
-      synopsis: synopsis.trim(),
+      synopsis: cleanBasis,
+      request_basis: cleanBasis,
+      known_information: knownInformation.trim(),
+      investigation_objective: investigationObjective.trim(),
+      supporting_material: supportingMaterial
+        .map((item) => ({
+          id: item.id || createInternalId(),
+          type: item.type || "Other",
+          description: String(item.description || "").trim(),
+          reference_url: String(item.reference_url || "").trim(),
+        }))
+        .filter((item) => item.description || item.reference_url),
+      requested_priority: priority,
+      request_original: {
+        name: cleanName,
+        lead_investigator: cleanLead,
+        division,
+        priority,
+        request_basis: cleanBasis,
+        known_information: knownInformation.trim(),
+        investigation_objective: investigationObjective.trim(),
+      },
+      workspace_unlocked: false,
       status: "pending",
       officer_id: String(officerId || "").trim().toUpperCase(),
       created_by: operatorName,
@@ -1134,6 +1244,32 @@ export default function Dashboard() {
     closeCreateModal();
 
     void syncCreatedCase(createdCase);
+  };
+
+  const addSupportingMaterial = () => {
+    setSupportingMaterial((items) => [
+      ...items,
+      {
+        id: createInternalId(),
+        type: "Screenshot / Image",
+        description: "",
+        reference_url: "",
+      },
+    ]);
+  };
+
+  const updateSupportingMaterial = (id, field, value) => {
+    setSupportingMaterial((items) =>
+      items.map((item) =>
+        item.id === id ? { ...item, [field]: value } : item
+      )
+    );
+  };
+
+  const removeSupportingMaterial = (id) => {
+    setSupportingMaterial((items) =>
+      items.filter((item) => item.id !== id)
+    );
   };
 
   const handleFilterChange = (nextFilter) => {
@@ -1488,8 +1624,22 @@ export default function Dashboard() {
     }
   };
 
+  const primeCommandReview = (caseData) => {
+    setCommandChangeMode("no");
+    setReviewName(caseData?.name || "");
+    setReviewLead(caseData?.lead_investigator || "");
+    setReviewDivision(caseData?.division || DIVISIONS[0]);
+    setReviewPriority(caseData?.priority || PRIORITIES[0]);
+    setReviewBasis(caseData?.request_basis || caseData?.synopsis || "");
+    setReviewKnownInformation(caseData?.known_information || "");
+    setReviewObjective(caseData?.investigation_objective || "");
+    setReviewActionError("");
+    setReviewSubmitting(false);
+  };
+
   const openCaseDetail = async (caseData) => {
     setSelectedCase(caseData);
+    primeCommandReview(caseData);
     setCaseNote("");
     setCaseNoteError("");
     setIsDetailOpen(true);
@@ -1519,6 +1669,7 @@ export default function Dashboard() {
         };
 
         setSelectedCase(refreshed);
+        primeCommandReview(refreshed);
 
         updateCases((currentCases) =>
           currentCases.map((item) =>
@@ -1540,6 +1691,149 @@ export default function Dashboard() {
     setCaseNote("");
     setCaseNoteError("");
     setIsSavingCaseNote(false);
+    setCommandChangeMode("no");
+    setReviewActionError("");
+    setReviewSubmitting(false);
+  };
+
+  const handleApproveFromReview = async () => {
+    if (!selectedCase || !isUserAdmin || reviewSubmitting) {
+      return;
+    }
+
+    const cleanName = reviewName.trim();
+    const cleanLead = reviewLead.trim();
+    const cleanBasis = reviewBasis.trim();
+
+    if (commandChangeMode === "yes") {
+      if (!cleanName) {
+        setReviewActionError("Case name cannot be blank.");
+        return;
+      }
+      if (!cleanLead) {
+        setReviewActionError("Lead investigator cannot be blank.");
+        return;
+      }
+      if (!cleanBasis) {
+        setReviewActionError("Basis for investigation cannot be blank.");
+        return;
+      }
+    }
+
+    setReviewSubmitting(true);
+    setReviewActionError("");
+
+    const approvedAt = new Date().toISOString();
+    const changed =
+      commandChangeMode === "yes";
+
+    const approvedCase = {
+      ...selectedCase,
+      ...(changed
+        ? {
+            name: cleanName,
+            lead_investigator: cleanLead,
+            division: reviewDivision,
+            priority: reviewPriority,
+            request_basis: cleanBasis,
+            synopsis: cleanBasis,
+            known_information: reviewKnownInformation.trim(),
+            investigation_objective: reviewObjective.trim(),
+            command_adjusted_by: operatorName,
+            command_adjusted_at: approvedAt,
+          }
+        : {}),
+      status: "opened",
+      approved_by: operatorName,
+      approved_at: approvedAt,
+      updated_at: approvedAt,
+      workspace_unlocked: true,
+    };
+
+    approvedCase.case_file = {
+      created_at: approvedAt,
+      created_by: operatorName,
+      professional_summary: buildLocalProfessionalSummary(approvedCase),
+      investigation_basis:
+        approvedCase.request_basis || approvedCase.synopsis || "",
+      known_information: approvedCase.known_information || "",
+      investigation_objective:
+        approvedCase.investigation_objective || "",
+      evidence: buildLocalEvidenceRegister(
+        approvedCase,
+        operatorName,
+        approvedAt
+      ),
+      investigation_log: [],
+      assigned_investigators: approvedCase.lead_investigator
+        ? [approvedCase.lead_investigator]
+        : [],
+    };
+
+    updateCases((currentCases) =>
+      currentCases.map((item) =>
+        item.id === selectedCase.id ||
+        item.case_id === selectedCase.case_id
+          ? approvedCase
+          : item
+      )
+    );
+    setSelectedCase(approvedCase);
+    playSuccessSound();
+
+    const backendKey = getCaseKey(selectedCase);
+    if (!selectedCase?.backend_id || !backendKey) {
+      setReviewSubmitting(false);
+      return;
+    }
+
+    try {
+      const response = await sccRemoteRequest(
+        "POST",
+        `/cases/${backendKey}/approve`,
+        changed
+          ? {
+              change_requested: true,
+              name: cleanName,
+              lead_investigator: cleanLead,
+              division: reviewDivision,
+              priority: reviewPriority,
+              request_basis: cleanBasis,
+              known_information: reviewKnownInformation.trim(),
+              investigation_objective: reviewObjective.trim(),
+            }
+          : { change_requested: false },
+        30000
+      );
+
+      if (response?.data) {
+        const synced = {
+          ...approvedCase,
+          ...response.data,
+          backend_id:
+            response.data.id ||
+            selectedCase.backend_id ||
+            selectedCase.id,
+          sync_status: "synced",
+        };
+        updateCases((currentCases) =>
+          currentCases.map((item) =>
+            item.id === selectedCase.id ||
+            item.case_id === selectedCase.case_id
+              ? synced
+              : item
+          )
+        );
+        setSelectedCase(synced);
+      }
+    } catch (error) {
+      setReviewActionError(
+        error?.response?.data?.detail ||
+          "Case was updated locally, but command approval could not sync to the server."
+      );
+    } finally {
+      setReviewSubmitting(false);
+    }
   };
 
   const handleAddCaseNote = async (event) => {
@@ -2439,14 +2733,11 @@ export default function Dashboard() {
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    updateCaseStatus(
-                                      caseData,
-                                      "opened"
-                                    )
+                                    openCaseDetail(caseData)
                                   }
                                   className="px-2.5 py-1.5 rounded-xl border border-[#245d3d] bg-[#0f2e1e]/60 text-[#79e0a4] text-[9px] font-mono uppercase"
                                 >
-                                  Approve
+                                  Review
                                 </button>
 
                                 <button
@@ -2493,7 +2784,7 @@ export default function Dashboard() {
                   SCC // Case Management
                 </p>
                 <h2 className="text-xl font-bold uppercase tracking-wider mt-1">
-                  New Case File Log
+                  New Investigation Request
                 </h2>
               </div>
 
@@ -2579,28 +2870,131 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <FieldLabel>Discord Case File Link</FieldLabel>
-                  <input
-                    value={discordLink}
-                    onChange={(event) =>
-                      setDiscordLink(event.target.value)
-                    }
-                    className={INPUT_CLASS}
-                    placeholder="https://discord.com/channels/..."
+                  <FieldLabel>Basis for Investigation</FieldLabel>
+                  <textarea
+                    value={requestBasis}
+                    onChange={(event) => {
+                      setRequestBasis(event.target.value);
+                      setSynopsis(event.target.value);
+                    }}
+                    className={`${INPUT_CLASS} min-h-[110px] resize-y`}
+                    placeholder="Explain why this matter should become a formal SCC investigation..."
                   />
                 </div>
 
                 <div>
-                  <FieldLabel>Synopsis</FieldLabel>
+                  <FieldLabel>Known Information</FieldLabel>
                   <textarea
-                    value={synopsis}
+                    value={knownInformation}
                     onChange={(event) =>
-                      setSynopsis(event.target.value)
+                      setKnownInformation(event.target.value)
                     }
-                    className={`${INPUT_CLASS} min-h-[120px] resize-y`}
-                    placeholder="Operational synopsis..."
+                    className={`${INPUT_CLASS} min-h-[90px] resize-y`}
+                    placeholder="Known persons, vehicles, links between incidents, or other confirmed information..."
                   />
                 </div>
+
+                <div>
+                  <FieldLabel>Investigation Objective</FieldLabel>
+                  <textarea
+                    value={investigationObjective}
+                    onChange={(event) =>
+                      setInvestigationObjective(event.target.value)
+                    }
+                    className={`${INPUT_CLASS} min-h-[80px] resize-y`}
+                    placeholder="What should this investigation establish or progress?"
+                  />
+                </div>
+
+                <GlassPanel className="p-4 bg-[#10233a]/45">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-mono uppercase tracking-widest text-[#d4b25a]">
+                        Initial Evidence / Supporting Material
+                      </p>
+                      <p className="mt-1 text-xs text-[#7186a0]">
+                        Add material Command should consider before authorising the investigation.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addSupportingMaterial}
+                      className="px-3 py-2 rounded-xl border border-[#2b4265] bg-[#142a42]/70 text-[10px] font-mono uppercase tracking-wider text-[#c6d2e1] hover:text-white"
+                    >
+                      + Add Item
+                    </button>
+                  </div>
+
+                  {supportingMaterial.length > 0 && (
+                    <div className="mt-4 space-y-3">
+                      {supportingMaterial.map((item, index) => (
+                        <div
+                          key={item.id}
+                          className="rounded-xl border border-[#1b324d]/80 bg-[#07111d]/70 p-3"
+                        >
+                          <div className="flex items-center justify-between gap-3 mb-3">
+                            <p className="text-[10px] font-mono uppercase tracking-wider text-[#8ba0bd]">
+                              Supporting Item {String(index + 1).padStart(2, "0")}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => removeSupportingMaterial(item.id)}
+                              className="p-1.5 rounded-lg text-[#7186a0] hover:text-[#f08080] hover:bg-[#2a1414]/60"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <select
+                              value={item.type}
+                              onChange={(event) =>
+                                updateSupportingMaterial(
+                                  item.id,
+                                  "type",
+                                  event.target.value
+                                )
+                              }
+                              className={INPUT_CLASS}
+                            >
+                              <option>Screenshot / Image</option>
+                              <option>Video / Clip</option>
+                              <option>Document</option>
+                              <option>Written Information</option>
+                              <option>Other</option>
+                            </select>
+
+                            <input
+                              value={item.reference_url}
+                              onChange={(event) =>
+                                updateSupportingMaterial(
+                                  item.id,
+                                  "reference_url",
+                                  event.target.value
+                                )
+                              }
+                              className={INPUT_CLASS}
+                              placeholder="Reference link (optional)"
+                            />
+                          </div>
+
+                          <textarea
+                            value={item.description}
+                            onChange={(event) =>
+                              updateSupportingMaterial(
+                                item.id,
+                                "description",
+                                event.target.value
+                              )
+                            }
+                            className={`${INPUT_CLASS} min-h-[76px] resize-y mt-3`}
+                            placeholder="Describe what this material shows or why it supports the request..."
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </GlassPanel>
 
                 <GlassPanel className="p-3 bg-[#10233a]/45">
                   <p className="text-[9px] font-mono uppercase tracking-widest text-[#7186a0]">
@@ -2636,7 +3030,7 @@ export default function Dashboard() {
                   type="submit"
                   className="px-5 py-2.5 rounded-xl border border-[#d4b25a]/55 bg-[#d4b25a] text-[#07101b] text-xs font-bold uppercase tracking-wider hover:bg-[#e2c46c]"
                 >
-                  Create Case
+                  Submit for Review
                 </button>
               </div>
             </form>
@@ -2775,13 +3169,52 @@ export default function Dashboard() {
                   </div>
                   <div>
                     <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
-                      Synopsis
+                      {String(selectedCase.status || "").toLowerCase() === "pending"
+                        ? "Basis for Investigation"
+                        : "Authorised Investigation Summary"}
                     </p>
                     <p className="mt-2 text-base leading-relaxed text-[#d8e1ec] whitespace-pre-wrap">
-                      {selectedCase.synopsis || "No synopsis supplied."}
+                      {String(selectedCase.status || "").toLowerCase() === "pending"
+                        ? selectedCase.request_basis || selectedCase.synopsis || "No basis supplied."
+                        : selectedCase.case_file?.professional_summary ||
+                          selectedCase.request_basis ||
+                          selectedCase.synopsis ||
+                          "No summary supplied."}
                     </p>
                   </div>
                 </div>
+
+                {selectedCase.known_information && (
+                  <div className="grid grid-cols-[36px_1fr] gap-4 py-5">
+                    <div className="text-[#d4b25a] pt-0.5">
+                      <Search className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
+                        Known Information
+                      </p>
+                      <p className="mt-2 text-base leading-relaxed text-[#d8e1ec] whitespace-pre-wrap">
+                        {selectedCase.known_information}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {selectedCase.investigation_objective && (
+                  <div className="grid grid-cols-[36px_1fr] gap-4 py-5">
+                    <div className="text-[#d4b25a] pt-0.5">
+                      <Radio className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#8196b2]">
+                        Investigation Objective
+                      </p>
+                      <p className="mt-2 text-base leading-relaxed text-[#d8e1ec] whitespace-pre-wrap">
+                        {selectedCase.investigation_objective}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {String(selectedCase.status || "").toLowerCase() === "pending" && (
@@ -2804,17 +3237,199 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {selectedCase.discord_url && (
-                <a
-                  href={selectedCase.discord_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#665522] bg-[#2d2510]/55 px-4 py-3.5 text-sm font-semibold text-[#e2c46c] hover:bg-[#2d2510]/80 transition"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  View Case File Here
-                </a>
-              )}
+              {Array.isArray(selectedCase.supporting_material) &&
+                selectedCase.supporting_material.length > 0 && (
+                  <div className="mt-7 rounded-xl border border-[#1b324d]/80 bg-[#0b1828]/65 p-4">
+                    <div className="flex items-center gap-3">
+                      <FolderOpen className="h-5 w-5 text-[#d4b25a]" />
+                      <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-[#e7edf6]">
+                        Initial Evidence / Supporting Material
+                      </h3>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {selectedCase.supporting_material.map((item, index) => (
+                        <div
+                          key={item.id || `${item.type}-${index}`}
+                          className="rounded-xl border border-[#1b324d]/80 bg-[#07111d]/70 p-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-[10px] font-mono uppercase tracking-wider text-[#d4b25a]">
+                              ITEM {String(index + 1).padStart(2, "0")} · {item.type || "Other"}
+                            </p>
+                            {item.reference_url && (
+                              <a
+                                href={item.reference_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] font-mono uppercase tracking-wider text-[#8ba0bd] hover:text-white"
+                              >
+                                View Material
+                              </a>
+                            )}
+                          </div>
+                          <p className="mt-2 text-sm leading-relaxed text-[#d8e1ec] whitespace-pre-wrap">
+                            {item.description || "No description supplied."}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              {isUserAdmin &&
+                String(selectedCase.status || "").toLowerCase() === "pending" && (
+                  <div className="mt-7 rounded-xl border border-[#665522] bg-[#2d2510]/35 p-5">
+                    <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-[#d4b25a]">
+                      Command Review
+                    </p>
+                    <h3 className="mt-2 text-lg font-bold uppercase tracking-wide text-[#e7edf6]">
+                      Is there anything else you want to change?
+                    </h3>
+                    <p className="mt-2 text-xs leading-relaxed text-[#8ba0bd]">
+                      Choose No to authorise the request exactly as submitted, or Yes to adjust the case classification/details before approval.
+                    </p>
+
+                    <div className="mt-4 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCommandChangeMode("no");
+                          setReviewActionError("");
+                        }}
+                        className={`px-4 py-2 rounded-xl border text-xs font-bold uppercase tracking-wider ${
+                          commandChangeMode === "no"
+                            ? "border-[#d4b25a]/70 bg-[#d4b25a] text-[#07101b]"
+                            : "border-[#2b4265] bg-[#10233a]/70 text-[#9aabc0]"
+                        }`}
+                      >
+                        No
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCommandChangeMode("yes");
+                          setReviewActionError("");
+                        }}
+                        className={`px-4 py-2 rounded-xl border text-xs font-bold uppercase tracking-wider ${
+                          commandChangeMode === "yes"
+                            ? "border-[#d4b25a]/70 bg-[#d4b25a] text-[#07101b]"
+                            : "border-[#2b4265] bg-[#10233a]/70 text-[#9aabc0]"
+                        }`}
+                      >
+                        Yes
+                      </button>
+                    </div>
+
+                    {commandChangeMode === "yes" && (
+                      <div className="mt-5 space-y-4 border-t border-[#665522]/60 pt-5">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <FieldLabel>Case Name</FieldLabel>
+                            <input
+                              value={reviewName}
+                              onChange={(event) => setReviewName(event.target.value)}
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>Lead Investigator</FieldLabel>
+                            <input
+                              value={reviewLead}
+                              onChange={(event) => setReviewLead(event.target.value)}
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <FieldLabel>Division</FieldLabel>
+                            <select
+                              value={reviewDivision}
+                              onChange={(event) => setReviewDivision(event.target.value)}
+                              className={INPUT_CLASS}
+                            >
+                              {DIVISIONS.map((item) => (
+                                <option key={item} value={item}>
+                                  {item}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <FieldLabel>Authorised Priority</FieldLabel>
+                            <select
+                              value={reviewPriority}
+                              onChange={(event) => setReviewPriority(event.target.value)}
+                              className={INPUT_CLASS}
+                            >
+                              {PRIORITIES.map((item) => (
+                                <option key={item} value={item}>
+                                  {item}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="mt-1 text-[10px] font-mono uppercase tracking-wider text-[#7186a0]">
+                              Requested: {selectedCase.request_original?.priority || selectedCase.requested_priority || selectedCase.priority}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <FieldLabel>Basis for Investigation</FieldLabel>
+                          <textarea
+                            value={reviewBasis}
+                            onChange={(event) => setReviewBasis(event.target.value)}
+                            className={`${INPUT_CLASS} min-h-[100px] resize-y`}
+                          />
+                        </div>
+
+                        <div>
+                          <FieldLabel>Known Information</FieldLabel>
+                          <textarea
+                            value={reviewKnownInformation}
+                            onChange={(event) => setReviewKnownInformation(event.target.value)}
+                            className={`${INPUT_CLASS} min-h-[80px] resize-y`}
+                          />
+                        </div>
+
+                        <div>
+                          <FieldLabel>Investigation Objective</FieldLabel>
+                          <textarea
+                            value={reviewObjective}
+                            onChange={(event) => setReviewObjective(event.target.value)}
+                            className={`${INPUT_CLASS} min-h-[80px] resize-y`}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {reviewActionError && (
+                      <div className="mt-4 rounded-xl border border-[#6b2929] bg-[#2a1414]/70 px-4 py-3 text-xs text-[#f4a6a6]">
+                        {reviewActionError}
+                      </div>
+                    )}
+
+                    <div className="mt-5 flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openDenyDialog(selectedCase)}
+                        disabled={reviewSubmitting}
+                        className="px-4 py-2.5 rounded-xl border border-[#6b2929] bg-[#2a1414]/60 text-[#f08080] text-xs font-bold uppercase tracking-wider disabled:opacity-50"
+                      >
+                        Deny
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleApproveFromReview}
+                        disabled={reviewSubmitting}
+                        className="px-5 py-2.5 rounded-xl border border-[#245d3d] bg-[#0f2e1e]/80 text-[#79e0a4] text-xs font-bold uppercase tracking-wider disabled:opacity-50"
+                      >
+                        {reviewSubmitting ? "Approving..." : "Approve Investigation"}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
               <div className="mt-8 pt-7 border-t border-[#1b324d]/80">
                 <div className="flex items-center gap-3">

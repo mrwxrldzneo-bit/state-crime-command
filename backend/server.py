@@ -1809,6 +1809,13 @@ class LoginRequest(BaseModel):
     officer_id: str = ""
 
 
+class SupportingMaterial(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    type: str = "Other"
+    description: str = ""
+    reference_url: str = ""
+
+
 class CaseCreate(BaseModel):
     name: str
     lead_investigator: str
@@ -1816,6 +1823,10 @@ class CaseCreate(BaseModel):
     synopsis: str = ""
     discord_url: str = ""
     priority: str = "routine"
+    request_basis: str = ""
+    known_information: str = ""
+    investigation_objective: str = ""
+    supporting_material: List[SupportingMaterial] = Field(default_factory=list)
 
 
 class CaseUpdate(BaseModel):
@@ -1826,6 +1837,10 @@ class CaseUpdate(BaseModel):
     discord_url: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
+    request_basis: Optional[str] = None
+    known_information: Optional[str] = None
+    investigation_objective: Optional[str] = None
+    supporting_material: Optional[List[SupportingMaterial]] = None
 
 
 class HelpRequest(BaseModel):
@@ -1836,6 +1851,17 @@ class HelpRequest(BaseModel):
 
 class DenyRequest(BaseModel):
     denial_reason: str
+
+
+class ApprovalReviewRequest(BaseModel):
+    change_requested: bool = False
+    name: Optional[str] = None
+    lead_investigator: Optional[str] = None
+    division: Optional[str] = None
+    priority: Optional[str] = None
+    request_basis: Optional[str] = None
+    known_information: Optional[str] = None
+    investigation_objective: Optional[str] = None
 
 
 class TacticalMessageCreate(BaseModel):
@@ -1886,6 +1912,17 @@ class Case(BaseModel):
 
     status: str = "pending"
     priority: str = "routine"
+    requested_priority: str = "routine"
+
+    request_basis: str = ""
+    known_information: str = ""
+    investigation_objective: str = ""
+    supporting_material: List[SupportingMaterial] = Field(default_factory=list)
+    request_original: Optional[dict] = None
+    case_file: Optional[dict] = None
+    workspace_unlocked: bool = False
+    command_adjusted_by: Optional[str] = None
+    command_adjusted_at: Optional[str] = None
 
     notes: List[TimelineNote] = Field(
         default_factory=list
@@ -1919,6 +1956,86 @@ class Case(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _clean_case_text(value: str) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:] if text else text
+    if text[-1:] not in ".!?":
+        text += "."
+    return text
+
+
+def build_professional_case_summary(case: dict) -> str:
+    """Present submitted facts formally without adding new investigative facts."""
+    basis = _clean_case_text(
+        case.get("request_basis") or case.get("synopsis") or ""
+    )
+    known = _clean_case_text(case.get("known_information") or "")
+    objective = _clean_case_text(case.get("investigation_objective") or "")
+
+    paragraphs = []
+    if basis:
+        paragraphs.append(
+            "This investigation was authorised following command review of the "
+            f"submitted grounds. {basis}"
+        )
+    if known:
+        paragraphs.append(
+            "At the time of authorisation, the recorded known information was as "
+            f"follows: {known}"
+        )
+    if objective:
+        paragraphs.append(
+            "The stated investigative objective is recorded as follows: "
+            f"{objective}"
+        )
+
+    return (
+        "\n\n".join(paragraphs)
+        or "Investigation authorised following command review."
+    )
+
+
+def build_initial_evidence_register(
+    case: dict,
+    approved_by: str,
+    approved_at: str,
+) -> list:
+    case_id = str(case.get("case_id") or "SCC").strip()
+    suffix = case_id.split("-")[-1] if "-" in case_id else case_id
+    evidence = []
+
+    for index, item in enumerate(
+        case.get("supporting_material") or [],
+        start=1,
+    ):
+        if hasattr(item, "model_dump"):
+            item = item.model_dump()
+        item = dict(item or {})
+        description = str(item.get("description") or "").strip()
+        reference_url = str(item.get("reference_url") or "").strip()
+
+        if not description and not reference_url:
+            continue
+
+        evidence.append(
+            {
+                "evidence_id": f"EVD-{suffix}-{index:03d}",
+                "type": str(item.get("type") or "Other").strip() or "Other",
+                "description": description,
+                "reference_url": reference_url,
+                "submitted_by": str(case.get("created_by") or "Unknown"),
+                "submitted_at": str(case.get("created_at") or approved_at),
+                "registered_at": approved_at,
+                "registered_by": approved_by,
+                "source": "initial_submission",
+            }
+        )
+
+    return evidence
+
 
 def now_iso() -> str:
     return datetime.now(
@@ -2174,9 +2291,30 @@ async def create_case(
         name=body.name,
         lead_investigator=body.lead_investigator,
         division=body.division,
-        synopsis=body.synopsis,
+        synopsis=(body.synopsis or body.request_basis),
         discord_url=body.discord_url,
         priority=body.priority,
+        requested_priority=body.priority,
+        request_basis=(body.request_basis or body.synopsis),
+        known_information=body.known_information,
+        investigation_objective=body.investigation_objective,
+        supporting_material=body.supporting_material,
+        request_original={
+            "name": body.name,
+            "lead_investigator": body.lead_investigator,
+            "division": body.division,
+            "priority": body.priority,
+            "request_basis": (body.request_basis or body.synopsis),
+            "known_information": body.known_information,
+            "investigation_objective": body.investigation_objective,
+            "supporting_material": [
+                item.model_dump()
+                for item in body.supporting_material
+            ],
+            "submitted_by": user["username"],
+            "submitted_at": ts,
+        },
+        workspace_unlocked=False,
         status="pending",
         notes=[
             TimelineNote(
@@ -3274,6 +3412,7 @@ async def add_note(
 async def approve_case(
     case_uid: str,
     background_tasks: BackgroundTasks,
+    body: ApprovalReviewRequest = ApprovalReviewRequest(),
     user: dict = Depends(require_admin),
 ):
 
@@ -3296,26 +3435,107 @@ async def approve_case(
             ),
         )
 
+    review_changes = {}
+    if body.change_requested:
+        if body.division is not None and body.division not in DIVISIONS:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid division selected.",
+            )
+        if body.priority is not None and body.priority not in PRIORITIES:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid priority selected.",
+            )
+
+        editable_fields = (
+            "name",
+            "lead_investigator",
+            "division",
+            "priority",
+            "request_basis",
+            "known_information",
+            "investigation_objective",
+        )
+        submitted = body.model_dump()
+
+        for field_name in editable_fields:
+            value = submitted.get(field_name)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                value = value.strip()
+            if field_name in {"name", "lead_investigator"} and not value:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field_name.replace('_', ' ').title()} cannot be blank.",
+                )
+            review_changes[field_name] = value
+
+        if "request_basis" in review_changes:
+            review_changes["synopsis"] = review_changes["request_basis"]
+
+        if review_changes:
+            review_changes["command_adjusted_by"] = user["username"]
+            review_changes["command_adjusted_at"] = now_iso()
+            doc = {**doc, **review_changes}
+
     ts = now_iso()
+
+    approval_detail = (
+        " Command adjusted the submitted request before authorisation."
+        if review_changes
+        else ""
+    )
 
     entry = TimelineNote(
         note=(
             f"Case approved and opened by "
-            f"{user['username']}."
+            f"{user['username']}. Formal case file created."
+            f"{approval_detail}"
         ),
         author=user["username"],
         kind="system",
         created_at=ts,
     )
 
+    case_file = {
+        "created_at": ts,
+        "created_by": user["username"],
+        "professional_summary": build_professional_case_summary(doc),
+        "investigation_basis": str(
+            doc.get("request_basis") or doc.get("synopsis") or ""
+        ).strip(),
+        "known_information": str(
+            doc.get("known_information") or ""
+        ).strip(),
+        "investigation_objective": str(
+            doc.get("investigation_objective") or ""
+        ).strip(),
+        "evidence": build_initial_evidence_register(
+            doc,
+            user["username"],
+            ts,
+        ),
+        "investigation_log": [],
+        "assigned_investigators": (
+            [str(doc.get("lead_investigator") or "").strip()]
+            if str(doc.get("lead_investigator") or "").strip()
+            else []
+        ),
+    }
+
     await db.cases.update_one(
         {"id": case_uid},
         {
             "$set": {
+                **review_changes,
                 "status": "opened",
                 "approved_by": user["username"],
                 "approved_at": ts,
                 "updated_at": ts,
+                "workspace_unlocked": True,
+                "case_file": case_file,
             },
             "$push": {
                 "notes": entry.model_dump()
