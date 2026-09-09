@@ -417,21 +417,21 @@ def build_support_control_payload(
     status_key = str(status or "active").lower()
 
     if status_key == "ending":
-        status_text = "🟠 ENDING"
+        status_text = "ENDING"
         color = 0xD4B25A
         description = (
             "Command has requested termination of this Live Support session. "
             "The attached case thread will close after the five-second countdown."
         )
     elif status_key in {"ended", "closed"}:
-        status_text = "🔴 CLOSED"
+        status_text = "CLOSED"
         color = 0x6B2929
         description = (
             "This Live Support session has been closed. "
             "The case transcript remains retained by SCC."
         )
     else:
-        status_text = "🟢 ACTIVE"
+        status_text = "ACTIVE"
         color = 0x2F8F5B
         description = (
             "A State Crime Command investigator has requested live assistance. "
@@ -482,14 +482,12 @@ def build_support_control_payload(
                     "type": 2,
                     "style": 1,
                     "label": "Reply",
-                    "emoji": {"name": "💬"},
                     "custom_id": f"scc_support_reply:{session_id}",
                 },
                 {
                     "type": 2,
                     "style": 4,
                     "label": "End Support",
-                    "emoji": {"name": "⛔"},
                     "custom_id": f"scc_support_end:{session_id}",
                 },
             ],
@@ -616,7 +614,7 @@ async def begin_support_end(case: dict, ended_by: str):
         await post_discord_thread_message(
             thread_id,
             (
-                "⚠️ **LIVE SUPPORT END REQUESTED**\n"
+                "**LIVE SUPPORT END REQUESTED**\n"
                 f"Requested by **{ended_by}**.\n"
                 "Session will close in **5 seconds**."
             ),
@@ -692,7 +690,7 @@ async def finalize_support_end(
     if thread_id and DISCORD_BOT_TOKEN:
         await post_discord_thread_message(
             thread_id,
-            f"🔒 **LIVE SUPPORT CLOSED**\nEnded by **{ended_by}**.",
+            f"**LIVE SUPPORT CLOSED**\nEnded by **{ended_by}**.",
         )
 
         headers = {
@@ -755,6 +753,73 @@ async def begin_and_finalize_support_end(case_id: str, ended_by: str):
             ended_by,
             ending_at,
         )
+
+
+
+async def end_support_from_discord_interaction(
+    session_id: str,
+    ended_by: str,
+):
+    case = await db.cases.find_one(
+        {
+            "help_session_id": session_id,
+            "help_session_active": True,
+        },
+        {"_id": 0},
+    )
+
+    if not case:
+        logger.info(
+            "Discord End Support ignored; session %s is no longer active.",
+            session_id,
+        )
+        return
+
+    existing_ending_at = str(
+        case.get("help_ending_at") or ""
+    ).strip()
+
+    if existing_ending_at:
+        logger.info(
+            "Discord End Support ignored; session %s is already ending.",
+            session_id,
+        )
+        return
+
+    await begin_and_finalize_support_end(
+        case["id"],
+        ended_by,
+    )
+
+
+async def reply_from_discord_interaction(
+    session_id: str,
+    author_name: str,
+    author_id: str,
+    reply_text: str,
+):
+    case = await db.cases.find_one(
+        {
+            "help_session_id": session_id,
+            "help_session_active": True,
+        },
+        {"_id": 0},
+    )
+
+    if not case:
+        logger.info(
+            "Discord Reply ignored; session %s is no longer active.",
+            session_id,
+        )
+        return
+
+    await deliver_discord_modal_reply(
+        case["id"],
+        session_id,
+        author_name,
+        author_id,
+        reply_text,
+    )
 
 
 async def deliver_discord_modal_reply(
@@ -881,7 +946,7 @@ async def create_support_forum_post(
     embed = {
         "author": {"name": "NSWPF · State Crime Command"},
         "title": (
-            f"💬 LIVE SUPPORT CHAT — "
+            f"LIVE SUPPORT CHAT — "
             f"{case.get('case_id', 'Unknown Case')}"
         ),
         "description": (
@@ -920,7 +985,7 @@ async def create_support_forum_post(
 
     content = (
         f"{command_mention}\n"
-        "💬 **SCC LIVE SUPPORT REQUEST — COMMAND RESPONSE REQUIRED.**"
+        "**SCC LIVE SUPPORT REQUEST — COMMAND RESPONSE REQUIRED.**"
     ).strip()
 
     allowed_mentions = {
@@ -2755,6 +2820,18 @@ async def clear_help_session(
 
 
 
+
+@api_router.get("/discord/interactions/status")
+async def discord_interactions_status():
+    return {
+        "enabled": bool(DISCORD_PUBLIC_KEY),
+        "public_key_configured": bool(DISCORD_PUBLIC_KEY),
+        "bot_token_configured": bool(DISCORD_BOT_TOKEN),
+        "support_channel_configured": bool(DISCORD_SUPPORT_CHANNEL_ID),
+        "endpoint": "/api/discord/interactions",
+    }
+
+
 @api_router.post("/discord/interactions")
 async def discord_interactions(
     request: Request,
@@ -2833,26 +2910,11 @@ async def discord_interactions(
     ):
         session_id = custom_id.split(":", 1)[1].strip()
 
-        case = await db.cases.find_one(
-            {
-                "help_session_id": session_id,
-                "help_session_active": True,
-            },
-            {"_id": 0},
-        )
-
-        if not case:
-            return {
-                "type": 4,
-                "data": {
-                    "content": "This Live Support session is already closed.",
-                    "flags": 64,
-                },
-            }
-
+        # Acknowledge Discord immediately, then do Mongo/Discord work after
+        # the response so the button does not time out on Render.
         background_tasks.add_task(
-            begin_and_finalize_support_end,
-            case["id"],
+            end_support_from_discord_interaction,
+            session_id,
             author_name,
         )
 
@@ -2860,8 +2922,8 @@ async def discord_interactions(
             "type": 4,
             "data": {
                 "content": (
-                    "Ending Live Support. "
-                    "The SCC session will close in 5 seconds."
+                    "Live Support is ending. "
+                    "The session will close in 5 seconds."
                 ),
                 "flags": 64,
             },
@@ -2877,7 +2939,9 @@ async def discord_interactions(
         for row in data.get("components") or []:
             for component in row.get("components") or []:
                 if component.get("custom_id") == "reply_text":
-                    reply_text = str(component.get("value") or "").strip()
+                    reply_text = str(
+                        component.get("value") or ""
+                    ).strip()
 
         if not reply_text:
             return {
@@ -2888,26 +2952,10 @@ async def discord_interactions(
                 },
             }
 
-        case = await db.cases.find_one(
-            {
-                "help_session_id": session_id,
-                "help_session_active": True,
-            },
-            {"_id": 0},
-        )
-
-        if not case:
-            return {
-                "type": 4,
-                "data": {
-                    "content": "This Live Support session is no longer active.",
-                    "flags": 64,
-                },
-            }
-
+        # Acknowledge the modal immediately, then post to the case thread
+        # and save to Mongo in the background.
         background_tasks.add_task(
-            deliver_discord_modal_reply,
-            case["id"],
+            reply_from_discord_interaction,
             session_id,
             author_name,
             author_id,
